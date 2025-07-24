@@ -14,7 +14,9 @@ const debug_flags = &[_][]const u8{
 
 const headers = &[_][]const u8{};
 
-const src_files = &[_][]const u8{};
+const src_files = &[_][]const u8{
+    "src/main.cpp",
+};
 
 pub fn build(b: *std.Build) !void {
     // options
@@ -29,6 +31,22 @@ pub fn build(b: *std.Build) !void {
     const fmt_include_path = b.pathJoin(&.{ fmt.builder.install_path, "include" });
     try flags.append(b.fmt("-I{s}", .{fmt_include_path}));
 
+    // this is just for compile_commands.json. if you dont define
+    // LIBCLANG_INCLUDE_DIR thats fine, you just will get  lots of intellisense
+    // problems
+    {
+        var env_map = try std.process.getEnvMap(b.allocator);
+        defer env_map.deinit();
+
+        var iter = env_map.iterator();
+        while (iter.next()) |entry| {
+            if (std.mem.eql(u8, entry.key_ptr.*, "LIBCLANG_INCLUDE_DIR")) {
+                try flags.append(b.fmt("-I{s}", .{entry.value_ptr.*}));
+                break;
+            }
+        }
+    }
+
     var executables = std.ArrayList(*std.Build.Step.Compile).init(b.allocator);
     defer executables.deinit();
 
@@ -39,15 +57,15 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .name = "codenodes",
     });
-    executables.append(codenodes);
+    try executables.append(codenodes);
 
     codenodes.addCSourceFiles(.{
         .files = src_files,
         .flags = flags_owned,
     });
     codenodes.linkLibCpp();
-    codenodes.linkSystemLibrary2("unwind", .{
-        .use_pkg_config = true,
+    codenodes.linkSystemLibrary2("clang", .{
+        .use_pkg_config = .yes, // doesnt succeed with nix
         .preferred_link_mode = .static,
     });
 
@@ -57,6 +75,6 @@ pub fn build(b: *std.Build) !void {
         install.dependOn(&exe_install.step);
     }
 
-    const cdbstep = zcc.createStep(b, "cdb", try codenodes.toOwnedSlice());
-    b.getInstallStep().dependOn(&cdbstep.step);
+    const cdbstep = zcc.createStep(b, "cdb", try executables.toOwnedSlice());
+    b.getInstallStep().dependOn(cdbstep);
 }

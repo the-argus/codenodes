@@ -1,5 +1,6 @@
 .{
     .name = .codenodes,
+    .fingerprint = 0x76f31f26a5f9c9c2,
     .version = "0.0.1",
     .paths = .{
         "src/",
