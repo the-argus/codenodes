@@ -27,6 +27,12 @@ pub fn build(b: *std.Build) !void {
     defer flags.deinit();
     try flags.appendSlice(if (optimize == .Debug) debug_flags else release_flags);
 
+    const raylib = b.dependency("raylib", .{
+        .target = target,
+        .optimize = optimize,
+        .linux_display_backend = .X11,
+    });
+
     const fmt = b.dependency("fmt", .{});
     const fmt_include_path = b.pathJoin(&.{ fmt.builder.install_path, "include" });
     try flags.append(b.fmt("-I{s}", .{fmt_include_path}));
@@ -57,6 +63,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .name = "codenodes",
     });
+    codenodes.linkLibrary(raylib.artifact("raylib"));
     try executables.append(codenodes);
 
     codenodes.addCSourceFiles(.{
