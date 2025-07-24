@@ -1,0 +1,4 @@
+---
+Checks: '*,-llvmlibc-restict-system-libc-headers,-cppcoreguidelines-avoid-magic-numbers,-readability-magic-numbers,-modernize-use-trailing-return-type'
+WarningsAsErrors: 'True'
+...
