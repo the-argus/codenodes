@@ -47,10 +47,10 @@
               cmake --build out --parallel
             '')
             (pkgs.writeShellScriptBin "run" ''
-              ./out/codenodes $@
+              ./out/codenodes -o test $@
             '')
             (pkgs.writeShellScriptBin "debug" ''
-              gdb --args ./out/codenodes $@
+              gdb --args ./out/codenodes -o test $@
             '')
           ];
         };
