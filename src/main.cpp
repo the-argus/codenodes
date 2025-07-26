@@ -2,6 +2,7 @@
 #include <argz/argz.hpp>
 #include <cstring>
 #include <fstream>
+#include <print>
 #include <ranges>
 
 #include "clang_to_graphml.h"
@@ -79,28 +80,18 @@ int main(int argc, const char* argv[])
     }
     auto& ccs = maybe_ccs.value();
 
-    std::vector<const char*> args; // clang wants null term strings, no sviews
-
+    // clang wants null term strings, no sviews, so we have to copy out of the
+    // single `command` string to make them all null terminated
     std::pmr::synchronized_pool_resource resource = {};
     cn::ClangToGraphMLBuilder graph_builder(resource);
     for (const auto& entry : ccs) {
-        args.clear();
-        for (auto arg : entry.command | std::views::split(' ')) {
-            // TODO: figure out why my libclang doesnt know this flag
-            // currently removing it because it causes warnings about how it's
-            // unknown
-            constexpr std::array discards = {
-                std::string_view{"-Wno-missing-braces"},
-            };
-            const auto is_arg = [arg](const auto& sv) {
-                return string_view_compare(sv, arg);
-            };
-            if (std::ranges::any_of(discards, is_arg)) {
-                break;
-            }
-            args.emplace_back(arg.data());
-        }
-
+        auto view =
+            entry.command | std::views::split(' ') |
+            std::views::transform([](auto a) { return std::string_view{a}; }) |
+            std::views::filter(&std::string_view::empty) | std::views::common;
+        std::vector<std::string> args_storage(view.begin(), view.end());
+        auto to_ptr = args_storage | std::views::transform(&std::string::c_str);
+        std::vector<const char*> args(to_ptr.begin(), to_ptr.end());
         graph_builder.add_parse_job(entry.file.c_str(), args);
     }
 
@@ -108,4 +99,6 @@ int main(int argc, const char* argv[])
         // no need to print anything, stderr should happen from failing threads
         return EXIT_FAILURE;
     }
+
+    return EXIT_SUCCESS;
 }

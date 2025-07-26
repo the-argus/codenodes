@@ -120,6 +120,7 @@ void ClangToGraphMLBuilder::Job::do_file(
                                    nullptr, 0, CXTranslationUnit_None);
 
     if (unit == nullptr) {
+
         auto&& _unused =
             fprintf(stderr, "Unable to parse translation unit %s, aborting.\n",
                     filename);
@@ -130,7 +131,8 @@ void ClangToGraphMLBuilder::Job::do_file(
 
     // warn for diagnostics
     CXDiagnosticSet diagnostics = clang_getDiagnosticSetFromTU(unit);
-    for (size_t i = 0; i < clang_getNumDiagnostics(unit); ++i) {
+    const size_t num_diagnostic = clang_getNumDiagnostics(unit);
+    for (size_t i = 0; i < num_diagnostic; ++i) {
         CXDiagnostic diagnostic = clang_getDiagnosticInSet(diagnostic, i);
 
         CXString string = clang_formatDiagnostic(
@@ -152,8 +154,8 @@ void ClangToGraphMLBuilder::Job::do_file(
 
             CXString current_display_name =
                 clang_getCursorDisplayName(current_cursor);
-            printf("Visiting element %s\n",
-                   clang_getCString(current_display_name));
+            // printf("Visiting element %s\n",
+            //        clang_getCString(current_display_name));
             clang_disposeString(current_display_name);
             return CXChildVisit_Recurse;
         },
