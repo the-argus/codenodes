@@ -3,7 +3,7 @@
 #include <thread>
 #include <unordered_map>
 
-#include "translation_unit.h"
+#include "clang_to_graphml.h"
 
 template <typename T> using vector = std::pmr::vector<T>;
 using string = std::pmr::string;

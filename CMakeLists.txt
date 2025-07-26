@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_executable(codenodes
     src/main.cpp
     src/compile_command_entry.cpp
-    src/translation_unit.cpp)
+    src/clang_to_graphml.cpp)
 
 find_package(Clang CONFIG REQUIRED)
 if(Clang_FOUND)

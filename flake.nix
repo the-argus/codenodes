@@ -23,7 +23,7 @@
       pkgs = import nixpkgs {inherit system;};
     in {
       devShell =
-        (pkgs.mkShell.override {stdenv = pkgs.clangStdenv;})
+        (pkgs.mkShell.override {stdenv = pkgs.gccStdenv;})
         {
           packages = with pkgs; [
             cmake

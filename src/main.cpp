@@ -3,7 +3,7 @@
 #include <ranges>
 
 #include "compile_command_entry.h"
-#include "translation_unit.h"
+#include "clang_to_graphml.h"
 
 int main(int argc, const char* argv[])
 {
