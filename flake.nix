@@ -41,13 +41,16 @@
             libffi
             libxml2
             (pkgs.writeShellScriptBin "configure" ''
-              cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -S . -B out -G "Unix Makefiles"
+              cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug -S . -B out -G "Unix Makefiles"
             '')
             (pkgs.writeShellScriptBin "build" ''
               cmake --build out --parallel
             '')
             (pkgs.writeShellScriptBin "run" ''
               ./out/codenodes $@
+            '')
+            (pkgs.writeShellScriptBin "debug" ''
+              gdb --args ./out/codenodes $@
             '')
           ];
         };

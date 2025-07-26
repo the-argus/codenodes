@@ -1,4 +1,4 @@
 ---
-Checks: '*,-llvmlibc-*,-cppcoreguidelines-avoid-magic-numbers,-readability-magic-numbers,-modernize-use-trailing-return-type,-altera-struct-pack-align,-fuchsia-default-arguments-calls,-modernize-use-std-print,-cppcoreguidelines-pro-type-vararg,-hicpp-vararg,-altera-unroll-loops,-misc-non-private-member-variables-in-classes,-fuchsia-overloaded-operator'
+Checks: '*,-llvmlibc-*,-cppcoreguidelines-avoid-magic-numbers,-readability-magic-numbers,-modernize-use-trailing-return-type,-altera-struct-pack-align,-fuchsia-default-arguments-calls,-modernize-use-std-print,-cppcoreguidelines-pro-type-vararg,-hicpp-vararg,-altera-unroll-loops,-misc-non-private-member-variables-in-classes,-fuchsia-overloaded-operator,-readability-identifier-length,-boost-use-ranges,-google-readability-todo'
 WarningsAsErrors: 'True'
 ...

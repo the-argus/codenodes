@@ -1,6 +1,5 @@
 #include <clang-c/Index.h>
 #include <cstdio>
-#include <thread>
 #include <unordered_map>
 
 #include "clang_to_graphml.h"
@@ -28,8 +27,9 @@ template <typename T, typename... args_t>
 owning_ptr<T> make_owning_with(std::pmr::polymorphic_allocator<>& allocator,
                                args_t&&... args)
 {
-    return owning_ptr(
-        allocator.allocate_object<T>(std::forward<args_t>(args)...));
+    T* ptr = allocator.allocate_object<T>();
+    std::construct_at(ptr, std::forward<args_t>(args)...);
+    return owning_ptr(ptr);
 }
 } // namespace
 
@@ -79,64 +79,43 @@ struct ClassInfo : public Symbol
     vector<FunctionInfo*> memberFunctionSymbols;
 };
 
-struct ClangToGraphMLBuilder::ThreadContext
+struct ClangToGraphMLBuilder::Job
 {
+    explicit Job(size_t initial_size_bytes, std::pmr::memory_resource* res)
+        : memory_resource(initial_size_bytes, res), allocator(&memory_resource),
+          functions(allocator), classes(allocator)
+    {
+    }
+
+    void do_file(const char* filename,
+                 std::span<const char* const> command_args) noexcept;
+
+    std::pmr::monotonic_buffer_resource memory_resource;
     std::pmr::polymorphic_allocator<> allocator;
     map<std::string_view, owning_ptr<FunctionInfo>> functions;
     map<std::string_view, owning_ptr<ClassInfo>> classes;
 };
 
-struct ClangToGraphMLBuilder::Job
-{
-    template <typename... args_t>
-    explicit Job(args_t&&... args)
-        : memory_resource{std::forward<args_t>(args)...}
-    {
-    }
-
-    std::jthread thread;
-    std::pmr::monotonic_buffer_resource memory_resource;
-    std::optional<ThreadContext> ctx; // deferred initialize
-};
-
 ClangToGraphMLBuilder::ClangToGraphMLBuilder(
     std::pmr::memory_resource& memory_resource)
-    : m_cindex(clang_createIndex(0, 0)), m_resource(memory_resource),
-      m_allocator(&memory_resource)
+    : m_resource(memory_resource), m_allocator(&memory_resource)
 {
 }
 
-ClangToGraphMLBuilder::~ClangToGraphMLBuilder()
-{
-    clang_disposeIndex(m_cindex);
-    for (auto& job : m_jobs) {
-        job->thread.join();
-        m_allocator.deallocate_object(job);
-        job = nullptr;
-    }
-}
-
-void ClangToGraphMLBuilder::spawn_parse_job(
+void ClangToGraphMLBuilder::add_parse_job(
     const char* filename, std::span<const char* const> command_args) noexcept
 {
-    Job* job = std::construct_at(m_allocator.allocate_object<Job>(),
-                                 arena_initial_size_bytes, &m_resource);
-
-    job->ctx.emplace(std::pmr::polymorphic_allocator<>(&job->memory_resource));
-
-    // actually start execution
-    job->thread = std::jthread(ClangToGraphMLBuilder::thread_entry, m_cindex,
-                               &job->ctx.value(), filename, command_args);
-
-    m_jobs.push_back(job);
+    m_jobs.push_back(static_cast<Job*>(make_owning_with<Job>(
+        m_allocator, arena_initial_size_bytes, &m_resource)));
+    m_jobs.back()->do_file(filename, command_args);
 }
 
-void ClangToGraphMLBuilder::thread_entry(
-    void* cindex, ThreadContext* ctx, const char* filename,
-    std::span<const char* const> command_args) noexcept
+void ClangToGraphMLBuilder::Job::do_file(
+    const char* filename, std::span<const char* const> command_args) noexcept
 {
+    CXIndex index = clang_createIndex(0, 0);
     CXTranslationUnit unit =
-        clang_parseTranslationUnit(cindex, filename, command_args.data(),
+        clang_parseTranslationUnit(index, filename, command_args.data(),
                                    static_cast<int>(command_args.size()),
                                    nullptr, 0, CXTranslationUnit_None);
 
@@ -145,6 +124,7 @@ void ClangToGraphMLBuilder::thread_entry(
             fprintf(stderr, "Unable to parse translation unit %s, aborting.\n",
                     filename);
         clang_disposeTranslationUnit(unit);
+        clang_disposeIndex(index);
         return;
     }
 
@@ -181,6 +161,7 @@ void ClangToGraphMLBuilder::thread_entry(
     );
 
     clang_disposeTranslationUnit(unit);
+    clang_disposeIndex(index);
 }
 
 bool ClangToGraphMLBuilder::finish_and_write(std::ostream& output) noexcept

@@ -1,9 +1,23 @@
+#include <algorithm>
 #include <argz/argz.hpp>
+#include <cstring>
 #include <fstream>
 #include <ranges>
 
-#include "compile_command_entry.h"
 #include "clang_to_graphml.h"
+#include "compile_command_entry.h"
+
+namespace {
+template <typename LHS, typename RHS>
+constexpr bool string_view_compare(LHS a, RHS b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+
+    return ::memcmp(a.data(), b.data(), std::min(a.size(), b.size())) == 0;
+}
+} // namespace
 
 int main(int argc, const char* argv[])
 {
@@ -16,7 +30,7 @@ int main(int argc, const char* argv[])
     };
 
     std::optional<std::string> compile_commands_path{};
-    std::string output_file_path{};
+    std::optional<std::string> output_file_path{};
     argz::options opts{
         {
             .ids = {.id = "compile_commands", .alias = 'c'},
@@ -40,12 +54,17 @@ int main(int argc, const char* argv[])
         return EXIT_FAILURE;
     }
 
-    std::ofstream output_file(output_file_path);
+    if (!output_file_path.has_value()) {
+        auto&& _unused = fprintf(stderr, "Provide an output file\n");
+        return EXIT_FAILURE;
+    }
+
+    std::ofstream output_file(output_file_path.value());
 
     if (!output_file) {
         auto&& _unused =
             fprintf(stderr, "Unable to open output file %s for writing.\n",
-                    output_file_path.c_str());
+                    output_file_path.value().c_str());
         return EXIT_FAILURE;
     }
 
@@ -66,11 +85,23 @@ int main(int argc, const char* argv[])
     cn::ClangToGraphMLBuilder graph_builder(resource);
     for (const auto& entry : ccs) {
         args.clear();
-        for (auto split : entry.command | std::views::split(' ')) {
-            args.emplace_back(split.data());
+        for (auto arg : entry.command | std::views::split(' ')) {
+            // TODO: figure out why my libclang doesnt know this flag
+            // currently removing it because it causes warnings about how it's
+            // unknown
+            constexpr std::array discards = {
+                std::string_view{"-Wno-missing-braces"},
+            };
+            const auto is_arg = [arg](const auto& sv) {
+                return string_view_compare(sv, arg);
+            };
+            if (std::ranges::any_of(discards, is_arg)) {
+                break;
+            }
+            args.emplace_back(arg.data());
         }
 
-        graph_builder.spawn_parse_job(entry.file.c_str(), args);
+        graph_builder.add_parse_job(entry.file.c_str(), args);
     }
 
     if (!graph_builder.finish_and_write(output_file)) {
