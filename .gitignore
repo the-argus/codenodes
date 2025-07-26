@@ -5,3 +5,4 @@ zig-out/
 compile_commands.json
 build/
 out/
+test
