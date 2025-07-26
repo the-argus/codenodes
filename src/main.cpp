@@ -1,4 +1,5 @@
 #include <argz/argz.hpp>
+#include <fstream>
 #include <ranges>
 
 #include "compile_command_entry.h"
@@ -15,20 +16,37 @@ int main(int argc, const char* argv[])
     };
 
     std::optional<std::string> compile_commands_path{};
+    std::string output_file_path{};
     argz::options opts{
-        {.ids = {.id = "compile_commands", .alias = 'c'},
-         .value = compile_commands_path,
-         .help =
-             "path to a compile_commands.json file which describes the source "
-             "files and headers which should be included in visualization"},
+        {
+            .ids = {.id = "compile_commands", .alias = 'c'},
+            .value = compile_commands_path,
+            .help = "path to a compile_commands.json file which describes the "
+                    "source files and headers which should be included in "
+                    "visualization",
+        },
+        {
+            .ids = {.id = "output", .alias = 'o'},
+            .value = output_file_path,
+            .help = "path to the output GraphML file",
+        },
     };
 
     try {
         argz::parse(about, opts, argc, argv);
     } catch (const std::exception& e) {
         auto&& _unused =
-            fprintf(stderr, "Bad command line arguments: %s", e.what());
-        return 1;
+            fprintf(stderr, "Bad command line arguments: %s\n", e.what());
+        return EXIT_FAILURE;
+    }
+
+    std::ofstream output_file(output_file_path);
+
+    if (!output_file) {
+        auto&& _unused =
+            fprintf(stderr, "Unable to open output file %s for writing.\n",
+                    output_file_path.c_str());
+        return EXIT_FAILURE;
     }
 
     const std::string_view cc_path =
@@ -42,16 +60,21 @@ int main(int argc, const char* argv[])
     }
     auto& ccs = maybe_ccs.value();
 
-    std::vector<std::string_view> args;
+    std::vector<const char*> args; // clang wants null term strings, no sviews
+
+    std::pmr::synchronized_pool_resource resource = {};
+    cn::ClangToGraphMLBuilder graph_builder(resource);
     for (const auto& entry : ccs) {
         args.clear();
         for (auto split : entry.command | std::views::split(' ')) {
-            args.emplace_back(split);
+            args.emplace_back(split.data());
         }
 
-        if (auto maybeTranslationUnit =
-                cn::TranslationUnit::parse(entry.file.c_str(), args)) {
-            auto& translation_unit = maybeTranslationUnit.value();
-        }
+        graph_builder.spawn_parse_job(entry.file.c_str(), args);
+    }
+
+    if (!graph_builder.finish_and_write(output_file)) {
+        // no need to print anything, stderr should happen from failing threads
+        return EXIT_FAILURE;
     }
 }

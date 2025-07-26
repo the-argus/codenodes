@@ -39,5 +39,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(argz)
 target_link_libraries(codenodes PRIVATE argz::argz)
 
-# try to do static linking to clang
-# set_target_properties(codenodes PROPERTIES LINK_FLAGS "-static")
+set(BOOST_ENABLE_CMAKE ON)
+FetchContent_Declare(
+  pugixml
+  GIT_REPOSITORY https://github.com/zeux/pugixml.git
+  GIT_TAG v1.15
+)
+FetchContent_MakeAvailable(pugixml)
+target_link_libraries(codenodes PRIVATE pugixml::pugixml)
