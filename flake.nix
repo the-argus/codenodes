@@ -2,7 +2,7 @@
   description = "dev environment for codenodes";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -23,9 +23,17 @@
       pkgs = import nixpkgs {inherit system;};
     in {
       devShell =
-        (pkgs.mkShell.override {stdenv = pkgs.gccStdenv;})
+        # NOTE: clang-tools has to come before clang, and we cant use
+        # clangStdenv because something is messed up with the setup hooks and it
+        # cant find the c runtime libs. so instead it has to be installed as
+        # just a package. see
+        # https://blog.kotatsu.dev/posts/2024-04-10-nixpkgs-clangd-missing-headers/
+        # and https://github.com/NixOS/nixpkgs/issues/76486
+        pkgs.mkShellNoCC
         {
           packages = with pkgs; [
+            clang-tools
+            clang
             cmake
             gnumake
             libclang
