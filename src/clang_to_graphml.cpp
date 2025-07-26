@@ -1,3 +1,4 @@
+#include <cassert>
 #include <clang-c/Index.h>
 #include <cstdio>
 #include <unordered_map>
@@ -152,11 +153,77 @@ void ClangToGraphMLBuilder::Job::do_file(
            void* userdata) -> enum CXChildVisitResult {
             // clang_getCursorUSR();
 
-            CXString current_display_name =
-                clang_getCursorDisplayName(current_cursor);
+            enum CXCursorKind kind = clang_getCursorKind(current_cursor);
+
+            switch (kind) {
+            case CXCursorKind::CXCursor_FunctionDecl: {
+                break;
+            }
+            case CXCursorKind::CXCursor_CXXMethod: {
+                // clang_Cursor_getNumArguments
+                // clang_Cursor_isDynamicCall()
+                break;
+            }
+            case CXCursorKind::CXCursor_CallExpr: {
+                CXCursor function = clang_getCursorReferenced(current_cursor);
+                enum CXCursorKind kind = clang_getCursorKind(function);
+
+                auto is_function = kind == CXCursor_CXXMethod ||
+                                   kind == CXCursor_FunctionDecl ||
+                                   kind == CXCursor_Constructor ||
+                                   kind == CXCursor_Destructor ||
+                                   kind == CXCursor_ConversionFunction;
+
+                if (!is_function) {
+                    auto name = [&]() -> std::optional<const char*> {
+                        switch (kind) {
+                        case CXCursor_FirstInvalid:
+                            return "CXCursor_FirstInvalid";
+                        case CXCursor_VarDecl:
+                            return "CXCursor_VarDecl";
+                        case CXCursor_ParmDecl:
+                            return "CXCursor_ParmDecl";
+                        case CXCursor_FieldDecl:
+                            return "CXCursor_FieldDecl";
+                        default:
+                            return {};
+                        }
+                    }();
+
+                    // TODO: removeme? maybe good to print these
+                    if (name) {
+                        break;
+                    }
+
+                    auto callsym = clang_getCursorSpelling(current_cursor);
+                    auto defsym = clang_getCursorSpelling(function);
+                    auto&& _unused = fprintf(
+                        stderr,
+                        "Found callexpr which does not reference a function: "
+                        "callsym is %s and defsym is %s with kind %d named "
+                        "%s\n",
+                        clang_getCString(callsym), clang_getCString(defsym),
+                        static_cast<int>(kind), name.value_or("unknown"));
+                    clang_disposeString(callsym);
+                    clang_disposeString(defsym);
+                    break;
+                }
+
+                // this is a function call and we have the cursor to the called
+                // function definition
+
+                break;
+            }
+            default:
+                // do nothing
+                break;
+            }
+
+            // CXString current_display_name =
+            //     clang_getCursorDisplayName(current_cursor);
             // printf("Visiting element %s\n",
-            //        clang_getCString(current_display_name));
-            clang_disposeString(current_display_name);
+            //        current_display_name);
+            // clang_disposeString(current_display_name);
             return CXChildVisit_Recurse;
         },
         nullptr // userdata
