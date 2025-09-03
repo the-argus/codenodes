@@ -1,38 +1,125 @@
 #include <cassert>
 #include <clang-c/Index.h>
 #include <cstdio>
+#include <span>
 #include <unordered_map>
+#include <utility>
 
 #include "clang_to_graphml.h"
 
-template <typename T> using vector = std::pmr::vector<T>;
-using string = std::pmr::string;
-template <typename K, typename V> using map = std::pmr::unordered_map<K, V>;
+// using std::pmr but these should all be backed by monotonic buffers
+template <typename T> using Vector = std::pmr::vector<T>;
+using String = std::pmr::string;
+template <typename K, typename V> using Map = std::pmr::unordered_map<K, V>;
+using Allocator = std::pmr::polymorphic_allocator<>;
+using MemoryResource = std::pmr::memory_resource;
+// resource user per parse job
+using JobResource = std::pmr::unsynchronized_pool_resource;
 
-// wrapper around a regular point to mark that, if this algorithm wasnt written
-// with arenas, that pointer would be responsible for freeing
-template <typename T> struct owning_ptr
+template <typename T> class OwningPointer
 {
-    constexpr T* operator->() { return m_inner; }
-    constexpr T& operator*() { return *m_inner; }
+  public:
+    constexpr T* operator->() noexcept { return ptr; }
+    constexpr T& operator*() noexcept { return *ptr; }
+    constexpr explicit operator bool() noexcept { return ptr; }
 
-    explicit constexpr owning_ptr(T* other) : m_inner(other) {}
-    explicit operator T*() { return m_inner; }
+    template <typename... ConstructorArgs>
+        requires std::is_constructible_v<T, ConstructorArgs...>
+    explicit constexpr OwningPointer(Allocator& _allocator,
+                                     ConstructorArgs&&... args)
+        : allocator(std::addressof(_allocator)),
+          ptr(_allocator.new_object<T>(std::forward<ConstructorArgs>(args)...))
+    {
+    }
+
+    constexpr OwningPointer(OwningPointer&& other) noexcept
+        : ptr(std::exchange(other.ptr, nullptr)), allocator(other.allocator)
+    {
+    }
+
+    constexpr OwningPointer& operator=(OwningPointer&& other) noexcept
+    {
+        allocator->delete_object(ptr);
+        ptr = std::exchange(other.ptr, nullptr);
+        allocator = other.allocator;
+    }
+
+    OwningPointer(const OwningPointer&) = delete;
+    OwningPointer& operator=(const OwningPointer&) = delete;
+
+    constexpr ~OwningPointer()
+    {
+        if (ptr) {
+            allocator->delete_object(ptr);
+        }
+    }
 
   private:
-    T* m_inner;
+    T* ptr;
+    Allocator* allocator;
 };
 
-namespace {
-template <typename T, typename... args_t>
-owning_ptr<T> make_owning_with(std::pmr::polymorphic_allocator<>& allocator,
-                               args_t&&... args)
+struct OwningCXString : private CXString
 {
-    T* ptr = allocator.allocate_object<T>();
-    std::construct_at(ptr, std::forward<args_t>(args)...);
-    return owning_ptr(ptr);
-}
-} // namespace
+    constexpr static OwningCXString clang_getCursorUSR(const CXCursor& cursor)
+    {
+        return OwningCXString(::clang_getCursorUSR(cursor));
+    }
+
+    constexpr static OwningCXString
+    clang_getCursorSpelling(const CXCursor& cursor)
+    {
+        return OwningCXString(::clang_getCursorSpelling(cursor));
+    }
+
+    constexpr static OwningCXString
+    clang_getCursorDisplayName(const CXCursor& cursor)
+    {
+        return OwningCXString(::clang_getCursorDisplayName(cursor));
+    }
+
+    constexpr static OwningCXString
+    clang_formatDiagnostic(CXDiagnostic diagnostic,
+                           CXDiagnosticDisplayOptions display_options)
+    {
+        return OwningCXString(
+            ::clang_formatDiagnostic(diagnostic, display_options));
+    }
+
+    constexpr String copy_to_string(Allocator& allocator)
+    {
+        return {c_str(), allocator};
+    }
+
+    OwningCXString() = delete;
+    constexpr explicit OwningCXString(CXString nonowning) : CXString(nonowning)
+    {
+    }
+
+    constexpr OwningCXString(OwningCXString&& other) noexcept : CXString(other)
+    {
+        other.data = nullptr;
+        other.private_flags = 0;
+    }
+
+    constexpr OwningCXString& operator=(OwningCXString&& other) noexcept
+    {
+        data = std::exchange(other.data, nullptr);
+        private_flags = std::exchange(other.private_flags, 0);
+        return *this;
+    }
+
+    OwningCXString(const OwningCXString& other) = delete;
+    OwningCXString& operator=(const OwningCXString& other) = delete;
+
+    const char* c_str() noexcept { return clang_getCString(*this); }
+    constexpr std::string_view view() noexcept
+    {
+        return {clang_getCString(*this)};
+    }
+
+    constexpr ~OwningCXString() { clang_disposeString(*this); }
+};
 
 namespace cn {
 
@@ -48,13 +135,13 @@ enum class SymbolType : uint8_t
 struct Symbol
 {
     Symbol() = delete;
-    constexpr Symbol(SymbolType _type, string&& _name, bool _defined)
+    constexpr Symbol(SymbolType _type, String&& _name, bool _defined)
         : type(_type), name(std::move(_name)), defined(_defined)
     {
     }
 
     SymbolType type;
-    string name;
+    String name;
     bool defined = false; // this symbol may be incomplete
 };
 
@@ -64,7 +151,7 @@ struct EnumInfo;
 
 struct FunctionInfo : public Symbol
 {
-    constexpr FunctionInfo(SymbolType _type, string&& _name, bool _defined)
+    constexpr FunctionInfo(SymbolType _type, String&& _name, bool _defined)
         : Symbol(_type, std::move(_name), _defined),
           was_forward_declared(!_defined)
     {
@@ -72,46 +159,57 @@ struct FunctionInfo : public Symbol
 
     ClassInfo* parent = nullptr; // defined if this is a method
     bool has_overloads{};
-    bool was_forward_declared{};
+    const bool was_forward_declared;
 };
 
 struct ClassInfo : public Symbol
 {
-    vector<FunctionInfo*> memberFunctionSymbols;
+    Vector<FunctionInfo*> member_function_symbols;
+};
+
+struct ClangToGraphMLBuilder::Data
+{
+    // data that persists between calls to parse
+    std::vector<OwningPointer<Job>> finished_jobs;
 };
 
 struct ClangToGraphMLBuilder::Job
 {
-    explicit Job(size_t initial_size_bytes, std::pmr::memory_resource* res)
-        : memory_resource(initial_size_bytes, res), allocator(&memory_resource),
-          functions(allocator), classes(allocator)
+    explicit Job(MemoryResource* res)
+        : resource(res), allocator(&resource), functions(allocator),
+          classes(allocator)
     {
     }
 
-    void do_file(const char* filename,
-                 std::span<const char* const> command_args) noexcept;
+    void run(const char* filename,
+             std::span<const char* const> command_args) noexcept;
 
-    std::pmr::monotonic_buffer_resource memory_resource;
-    std::pmr::polymorphic_allocator<> allocator;
-    map<std::string_view, owning_ptr<FunctionInfo>> functions;
-    map<std::string_view, owning_ptr<ClassInfo>> classes;
+    Map<String, FunctionInfo*> functions;
+    Map<String, ClassInfo*> classes;
+    Allocator allocator;
+    JobResource resource;
 };
 
-ClangToGraphMLBuilder::ClangToGraphMLBuilder(
-    std::pmr::memory_resource& memory_resource)
-    : m_resource(memory_resource), m_allocator(&memory_resource)
+ClangToGraphMLBuilder::ClangToGraphMLBuilder(MemoryResource& memory_resource)
+    : m_resource(memory_resource), m_allocator(&memory_resource),
+      m_data(m_allocator.new_object<Data>())
 {
 }
 
-void ClangToGraphMLBuilder::add_parse_job(
+ClangToGraphMLBuilder::~ClangToGraphMLBuilder()
+{
+    m_allocator.delete_object(m_data);
+}
+
+void ClangToGraphMLBuilder::parse(
     const char* filename, std::span<const char* const> command_args) noexcept
 {
-    m_jobs.push_back(static_cast<Job*>(make_owning_with<Job>(
-        m_allocator, arena_initial_size_bytes, &m_resource)));
-    m_jobs.back()->do_file(filename, command_args);
+    OwningPointer<Job> job(m_allocator, &m_resource);
+    job->run(filename, command_args);
+    m_data->finished_jobs.emplace_back(std::move(job));
 }
 
-void ClangToGraphMLBuilder::Job::do_file(
+void ClangToGraphMLBuilder::Job::run(
     const char* filename, std::span<const char* const> command_args) noexcept
 {
     CXIndex index = clang_createIndex(0, 0);
@@ -122,7 +220,7 @@ void ClangToGraphMLBuilder::Job::do_file(
 
     if (unit == nullptr) {
 
-        auto&& _unused =
+        std::ignore =
             fprintf(stderr, "Unable to parse translation unit %s, aborting.\n",
                     filename);
         clang_disposeTranslationUnit(unit);
@@ -136,13 +234,12 @@ void ClangToGraphMLBuilder::Job::do_file(
     for (size_t i = 0; i < num_diagnostic; ++i) {
         CXDiagnostic diagnostic = clang_getDiagnosticInSet(diagnostic, i);
 
-        CXString string = clang_formatDiagnostic(
-            diagnostic,
-            CXDiagnosticDisplayOptions::CXDiagnostic_DisplaySourceLocation);
-        auto&& _unused =
-            fprintf(stderr, "DIAGNOSTIC - Encountered while parsing %s: %s\n",
-                    filename, clang_getCString(string));
-        clang_disposeString(string);
+        std::ignore = fprintf(
+            stderr, "DIAGNOSTIC - Encountered while parsing %s: %s\n", filename,
+            OwningCXString::clang_formatDiagnostic(
+                diagnostic,
+                CXDiagnosticDisplayOptions::CXDiagnostic_DisplaySourceLocation)
+                .c_str());
     }
 
     CXCursor cursor = clang_getTranslationUnitCursor(unit);
@@ -151,7 +248,17 @@ void ClangToGraphMLBuilder::Job::do_file(
         cursor, // Root cursor
         [](CXCursor current_cursor, CXCursor parent,
            void* userdata) -> enum CXChildVisitResult {
-            // clang_getCursorUSR();
+            auto usr = OwningCXString::clang_getCursorUSR(current_cursor);
+            auto display =
+                OwningCXString::clang_getCursorDisplayName(current_cursor);
+            if (usr.view().length() > 0) {
+                std::ignore = fprintf(
+                    stdout,
+                    "found cursor with USR: %s \nand display name: %s\n",
+                    usr.c_str(), display.c_str());
+            } else {
+                return CXChildVisit_Recurse;
+            }
 
             enum CXCursorKind kind = clang_getCursorKind(current_cursor);
 
@@ -195,22 +302,19 @@ void ClangToGraphMLBuilder::Job::do_file(
                         break;
                     }
 
-                    auto callsym = clang_getCursorSpelling(current_cursor);
-                    auto defsym = clang_getCursorSpelling(function);
-                    auto&& _unused = fprintf(
+                    auto callsym =
+                        OwningCXString::clang_getCursorSpelling(current_cursor);
+                    auto defsym =
+                        OwningCXString::clang_getCursorSpelling(function);
+                    std::ignore = fprintf(
                         stderr,
                         "Found callexpr which does not reference a function: "
                         "callsym is %s and defsym is %s with kind %d named "
                         "%s\n",
-                        clang_getCString(callsym), clang_getCString(defsym),
-                        static_cast<int>(kind), name.value_or("unknown"));
-                    clang_disposeString(callsym);
-                    clang_disposeString(defsym);
+                        callsym.c_str(), defsym.c_str(), static_cast<int>(kind),
+                        name.value_or("unknown"));
                     break;
                 }
-
-                // this is a function call and we have the cursor to the called
-                // function definition
 
                 break;
             }
@@ -219,11 +323,6 @@ void ClangToGraphMLBuilder::Job::do_file(
                 break;
             }
 
-            // CXString current_display_name =
-            //     clang_getCursorDisplayName(current_cursor);
-            // printf("Visiting element %s\n",
-            //        current_display_name);
-            // clang_disposeString(current_display_name);
             return CXChildVisit_Recurse;
         },
         nullptr // userdata
@@ -233,7 +332,7 @@ void ClangToGraphMLBuilder::Job::do_file(
     clang_disposeIndex(index);
 }
 
-bool ClangToGraphMLBuilder::finish_and_write(std::ostream& output) noexcept
+bool ClangToGraphMLBuilder::finish(std::ostream& output) noexcept
 {
     return false;
 }

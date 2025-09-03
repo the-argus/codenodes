@@ -50,20 +50,20 @@ int main(int argc, const char* argv[])
     try {
         argz::parse(about, opts, argc, argv);
     } catch (const std::exception& e) {
-        auto&& _unused =
+        std::ignore =
             fprintf(stderr, "Bad command line arguments: %s\n", e.what());
         return EXIT_FAILURE;
     }
 
     if (!output_file_path.has_value()) {
-        auto&& _unused = fprintf(stderr, "Provide an output file\n");
+        std::ignore = fprintf(stderr, "Provide an output file\n");
         return EXIT_FAILURE;
     }
 
     std::ofstream output_file(output_file_path.value());
 
     if (!output_file) {
-        auto&& _unused =
+        std::ignore =
             fprintf(stderr, "Unable to open output file %s for writing.\n",
                     output_file_path.value().c_str());
         return EXIT_FAILURE;
@@ -92,11 +92,10 @@ int main(int argc, const char* argv[])
         std::vector<std::string> args_storage(view.begin(), view.end());
         auto to_ptr = args_storage | std::views::transform(&std::string::c_str);
         std::vector<const char*> args(to_ptr.begin(), to_ptr.end());
-        graph_builder.add_parse_job(entry.file.c_str(), args);
+        graph_builder.parse(entry.file.c_str(), args);
     }
 
-    if (!graph_builder.finish_and_write(output_file)) {
-        // no need to print anything, stderr should happen from failing threads
+    if (!graph_builder.finish(output_file)) {
         return EXIT_FAILURE;
     }
 
