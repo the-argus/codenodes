@@ -17,16 +17,18 @@ class ClangToGraphMLBuilder
     ~ClangToGraphMLBuilder();
 
     /// Add a file to parse along with its commandline arguments
-    void parse(const char* filename, std::span<const char* const> command_args) noexcept;
+    void parse(const char* filename,
+               std::span<const char* const> command_args) noexcept;
 
     /// If there are undefined symbols, or any given job failed perhaps due to
     /// compilation errors, this returns false. Otherwise it writes GraphML XML
     /// to the output stream
     [[nodiscard]] bool finish(std::ostream& output) noexcept;
 
-  private:
     struct Job;
     struct PersistentData;
+
+  private:
     std::pmr::memory_resource& m_resource; // backs the other allocators
     std::pmr::polymorphic_allocator<> m_allocator;
     // data that persists between calls to parse

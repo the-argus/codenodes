@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstring>
 
 #include "clang_to_graphml.h"
 #include "clang_wrapper.h"
@@ -13,6 +14,9 @@ struct ClangToGraphMLBuilder::PersistentData
     Map<String, Symbol*> symbols_by_usr;
     // forest of definitions
     NamespaceSymbol global_namespace{nullptr, String{}};
+
+    /// For data which lives throughout the whole parse
+    std::pmr::polymorphic_allocator<> allocator;
 
     Symbol* try_get_symbol(const String& usr)
     {
@@ -39,7 +43,8 @@ struct ClangToGraphMLBuilder::Job
              std::span<const char* const> command_args) noexcept;
 
     static enum CXChildVisitResult
-    cursor_visitor(CXCursor current_cursor, CXCursor parent, void* userdata);
+    top_level_cursor_visitor(CXCursor current_cursor, CXCursor parent,
+                             void* userdata);
 
     // for use with clang_getInclusions... could be useful for eliminating
     // symbols after a certain inclusion depth
@@ -47,6 +52,28 @@ struct ClangToGraphMLBuilder::Job
     //                               CXSourceLocation* inclusion_stack,
     //                               unsigned include_len,
     //                               CXClientData client_data);
+
+    /// Creates or finds a symbol for a given cursor and returns a reference to
+    /// it
+    template <typename T>
+        requires(!std::is_same_v<T, Symbol> && std::is_base_of_v<Symbol, T>)
+    T& create_or_find_symbol_with_cursor(CXCursor cursor)
+    {
+        auto usr = OwningCXString::clang_getCursorUSR(cursor).copy_to_string(
+            allocator);
+
+        if (shared_data->symbols_by_usr.contains(usr)) {
+            Symbol* out = shared_data->symbols_by_usr[std::move(usr)];
+            assert(out->symbol_kind == T::kind);
+            return *dynamic_cast<T*>(out);
+        }
+
+        T* out = allocator.new_object<T>(
+            T::create_and_visit_children(*this, cursor));
+        shared_data->symbols_by_usr[std::move(usr)] = out;
+
+        return *out;
+    }
 
     PersistentData* shared_data;
     Allocator allocator;
@@ -72,24 +99,27 @@ void ClangToGraphMLBuilder::parse(
     m_data->finished_jobs.emplace_back(std::move(job));
 }
 
-enum CXChildVisitResult
-ClangToGraphMLBuilder::Job::cursor_visitor(CXCursor current_cursor,
-                                           CXCursor parent, void* userdata)
+enum CXChildVisitResult ClangToGraphMLBuilder::Job::top_level_cursor_visitor(
+    CXCursor current_cursor, CXCursor /*parent*/, void* userdata)
 {
+    const CXCursor old_cursor = current_cursor;
+    current_cursor = clang_getCanonicalCursor(current_cursor);
+
+    // skip forward declarations altogether
+    if (0 != memcmp(&old_cursor, &current_cursor, sizeof(CXCursor))) {
+        return CXChildVisit_Continue;
+    }
+
     auto* job = static_cast<Job*>(userdata);
     PersistentData* data = job->shared_data;
-    auto usr = OwningCXString::clang_getCursorUSR(current_cursor);
-    auto display = OwningCXString::clang_getCursorDisplayName(current_cursor);
-    if (usr.view().length() > 0) {
-        // std::ignore = fprintf(
-        //     stdout, "found cursor with USR: %s \nand display name: %s\n",
-        //     usr.c_str(), display.c_str());
-    }
 
     enum CXCursorKind kind = clang_getCursorKind(current_cursor);
 
     switch (kind) {
     case CXCursorKind::CXCursor_FunctionDecl: {
+        auto& function = job->create_or_find_symbol_with_cursor<FunctionSymbol>(
+            current_cursor);
+
         break;
     }
     case CXCursorKind::CXCursor_CXXMethod: {
@@ -170,7 +200,7 @@ ClangToGraphMLBuilder::Job::cursor_visitor(CXCursor current_cursor,
         break;
     }
 
-    return CXChildVisit_Recurse;
+    return CXChildVisit_Continue;
 }
 
 void ClangToGraphMLBuilder::Job::run(
@@ -208,8 +238,8 @@ void ClangToGraphMLBuilder::Job::run(
     CXCursor cursor = clang_getTranslationUnitCursor(unit);
 
     clang_visitChildren(cursor, // Root cursor
-                        Job::cursor_visitor,
-                        nullptr // userdata
+                        Job::top_level_cursor_visitor,
+                        this // userdata
     );
 
     clang_disposeTranslationUnit(unit);
