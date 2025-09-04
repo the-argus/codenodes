@@ -4,7 +4,6 @@
 #include <fstream>
 #include <memory_resource>
 #include <span>
-#include <vector>
 
 namespace cn {
 class ClangToGraphMLBuilder
@@ -27,11 +26,11 @@ class ClangToGraphMLBuilder
 
   private:
     struct Job;
-    struct Data;
+    struct PersistentData;
     std::pmr::memory_resource& m_resource; // backs the other allocators
     std::pmr::polymorphic_allocator<> m_allocator;
-    std::pmr::vector<Job*> m_jobs;
-    Data* m_data;
+    // data that persists between calls to parse
+    PersistentData* m_data;
 };
 
 } // namespace cn
