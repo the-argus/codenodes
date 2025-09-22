@@ -3,11 +3,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <variant>
 
 namespace cn {
 enum class PrimitiveTypeType : uint8_t
 {
+    Void,
     Int8,
     Int16,
     Int32,
@@ -19,7 +22,6 @@ enum class PrimitiveTypeType : uint8_t
     Float,
     Double,
     Bool,
-    Char, // distinct from int8?
     Nullptr,
     Unknown, // some weird implementation defined long double or something?
 };
@@ -44,18 +46,27 @@ struct CArrayTypeIdentifier
     size_t size{};
 };
 
-using ConcreteTypeIdentifier =
+struct ConcreteTypeIdentifier
+{
     std::variant<PrimitiveTypeType, UserDefinedTypeIdentifier,
-                 CArrayTypeIdentifier>;
+                 CArrayTypeIdentifier>
+        variant;
+};
 
 struct PointerTypeIdentifier
 {
+    using PointerToPointerTypeIdentifier =
+        std::unique_ptr<PointerTypeIdentifier,
+                        std::function<void(PointerTypeIdentifier*)>>;
     // either a pointer to another pointer, or a pointer to a concrete thing
-    std::variant<ConcreteTypeIdentifier, PointerTypeIdentifier*> pointee_type;
+    std::variant<ConcreteTypeIdentifier, PointerToPointerTypeIdentifier>
+        pointee_type;
 };
 
-using NonReferenceTypeIdentifier =
-    std::variant<PointerTypeIdentifier, ConcreteTypeIdentifier>;
+struct NonReferenceTypeIdentifier
+{
+    std::variant<PointerTypeIdentifier, ConcreteTypeIdentifier> variant;
+};
 
 struct ReferenceTypeIdentifier
 {
@@ -111,8 +122,10 @@ struct TypeIdentifier
             iden.contents_type);
     }
 
-    static Symbol*
-    pointee_type_recursive_visitor(PointerTypeIdentifier* pointer_iden)
+    static Symbol* pointee_type_recursive_visitor(
+        const std::unique_ptr<PointerTypeIdentifier,
+                              std::function<void(PointerTypeIdentifier*)>>&
+            pointer_iden)
     {
         return concrete_or_pointer_recursive_visitor(*pointer_iden);
     }
@@ -140,7 +153,7 @@ struct TypeIdentifier
             [](const auto& iden) {
                 return primitive_or_user_def_or_carray_recursive_visitor(iden);
             },
-            concrete_iden);
+            concrete_iden.variant);
     }
 
     static Symbol* ref_or_nonref_visitor(const ReferenceTypeIdentifier& ref)
@@ -155,7 +168,7 @@ struct TypeIdentifier
             [](const auto& iden) {
                 return concrete_or_pointer_recursive_visitor(iden);
             },
-            nonref);
+            nonref.variant);
     }
 };
 

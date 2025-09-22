@@ -1,5 +1,5 @@
-#ifndef __CODENODES_TRANSLATION_UNIT_H__
-#define __CODENODES_TRANSLATION_UNIT_H__
+#ifndef __CODENODES_CLANG_TO_GRAPHML_H__
+#define __CODENODES_CLANG_TO_GRAPHML_H__
 
 #include <fstream>
 #include <memory_resource>

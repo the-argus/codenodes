@@ -6,6 +6,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable(codenodes
     src/main.cpp
+    src/symbol_class.cpp
+    src/symbol_enumtype.cpp
+    src/symbol_function.cpp
+    src/symbol_namespace.cpp
     src/compile_command_entry.cpp
     src/clang_to_graphml.cpp)
 

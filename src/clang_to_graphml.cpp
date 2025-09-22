@@ -1,88 +1,13 @@
 #include <cassert>
 #include <cstring>
 
-#include "clang_to_graphml.h"
-#include "clang_wrapper.h"
-#include "symbol.h"
+#include "clang_to_graphml_impl.h"
 
 namespace cn {
 
-struct ClangToGraphMLBuilder::PersistentData
-{
-    std::vector<OwningPointer<Job>> finished_jobs;
-    // all symbols by their unique id
-    Map<String, Symbol*> symbols_by_usr;
-    // forest of definitions
-    NamespaceSymbol global_namespace{nullptr, String{}};
-
-    /// For data which lives throughout the whole parse
-    std::pmr::polymorphic_allocator<> allocator;
-
-    Symbol* try_get_symbol(const String& usr)
-    {
-        if (usr.empty()) {
-            return nullptr;
-        }
-        if (symbols_by_usr.contains(usr)) {
-            auto* out = symbols_by_usr[usr];
-            assert(out);
-            return out;
-        }
-        return nullptr;
-    }
-};
-
-struct ClangToGraphMLBuilder::Job
-{
-    explicit Job(MemoryResource* res, PersistentData* data)
-        : shared_data(data), resource(res), allocator(&resource)
-    {
-    }
-
-    void run(const char* filename,
-             std::span<const char* const> command_args) noexcept;
-
-    static enum CXChildVisitResult
-    top_level_cursor_visitor(CXCursor current_cursor, CXCursor parent,
-                             void* userdata);
-
-    // for use with clang_getInclusions... could be useful for eliminating
-    // symbols after a certain inclusion depth
-    // static void inclusion_visitor(CXFile included_file,
-    //                               CXSourceLocation* inclusion_stack,
-    //                               unsigned include_len,
-    //                               CXClientData client_data);
-
-    /// Creates or finds a symbol for a given cursor and returns a reference to
-    /// it
-    template <typename T>
-        requires(!std::is_same_v<T, Symbol> && std::is_base_of_v<Symbol, T>)
-    T& create_or_find_symbol_with_cursor(CXCursor cursor)
-    {
-        auto usr = OwningCXString::clang_getCursorUSR(cursor).copy_to_string(
-            allocator);
-
-        if (shared_data->symbols_by_usr.contains(usr)) {
-            Symbol* out = shared_data->symbols_by_usr[std::move(usr)];
-            assert(out->symbol_kind == T::kind);
-            return *dynamic_cast<T*>(out);
-        }
-
-        T* out = allocator.new_object<T>(
-            T::create_and_visit_children(*this, cursor));
-        shared_data->symbols_by_usr[std::move(usr)] = out;
-
-        return *out;
-    }
-
-    PersistentData* shared_data;
-    Allocator allocator;
-    JobResource resource;
-};
-
 ClangToGraphMLBuilder::ClangToGraphMLBuilder(MemoryResource& memory_resource)
     : m_resource(memory_resource), m_allocator(&memory_resource),
-      m_data(m_allocator.new_object<PersistentData>())
+      m_data(m_allocator.new_object<PersistentData>(&memory_resource))
 {
 }
 
@@ -106,9 +31,9 @@ enum CXChildVisitResult ClangToGraphMLBuilder::Job::top_level_cursor_visitor(
     current_cursor = clang_getCanonicalCursor(current_cursor);
 
     // skip forward declarations altogether
-    if (0 != memcmp(&old_cursor, &current_cursor, sizeof(CXCursor))) {
-        return CXChildVisit_Continue;
-    }
+    // if (0 != memcmp(&old_cursor, &current_cursor, sizeof(CXCursor))) {
+    //     return CXChildVisit_Continue;
+    // }
 
     auto* job = static_cast<Job*>(userdata);
     PersistentData* data = job->shared_data;
@@ -116,10 +41,16 @@ enum CXChildVisitResult ClangToGraphMLBuilder::Job::top_level_cursor_visitor(
     enum CXCursorKind kind = clang_getCursorKind(current_cursor);
 
     switch (kind) {
+    case CXCursorKind::CXCursor_Namespace: {
+        auto& namespace_symbol =
+            job->create_or_find_symbol_with_cursor<NamespaceSymbol>(
+                nullptr, current_cursor);
+        break;
+    }
     case CXCursorKind::CXCursor_FunctionDecl: {
-        auto& function = job->create_or_find_symbol_with_cursor<FunctionSymbol>(
-            current_cursor);
-
+        auto& function_symbol =
+            job->create_or_find_symbol_with_cursor<FunctionSymbol>(
+                nullptr, current_cursor);
         break;
     }
     case CXCursorKind::CXCursor_CXXMethod: {
