@@ -55,7 +55,7 @@ bool ClassSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
     assert(!job.shared_data->symbols_by_usr.contains(
         OwningCXString::clang_getCursorUSR(cursor).c_str()));
 
-    CXType class_type = clang_getCursorType(cursor);
+    CXType class_type = get_cannonical_type(cursor);
 
     if (class_type.kind != CXType_Record) {
         std::ignore = std::fprintf(

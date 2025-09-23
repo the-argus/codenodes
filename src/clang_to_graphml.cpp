@@ -46,21 +46,18 @@ enum CXChildVisitResult ClangToGraphMLBuilder::Job::top_level_cursor_visitor(
         auto& namespace_symbol =
             job->create_or_find_symbol_with_cursor<NamespaceSymbol>(
                 &job->shared_data->global_namespace, current_cursor);
-        job->shared_data->global_namespace.symbols.push_back(&namespace_symbol);
         break;
     }
     case CXCursorKind::CXCursor_FunctionDecl: {
         auto& function_symbol =
             job->create_or_find_symbol_with_cursor<FunctionSymbol>(
                 &job->shared_data->global_namespace, current_cursor);
-        job->shared_data->global_namespace.symbols.push_back(&function_symbol);
         break;
     }
     case CXCursorKind::CXCursor_EnumDecl: {
         auto& enum_symbol =
             job->create_or_find_symbol_with_cursor<EnumTypeSymbol>(
                 &job->shared_data->global_namespace, current_cursor);
-        job->shared_data->global_namespace.symbols.push_back(&enum_symbol);
         break;
     }
     case CXCursorKind::CXCursor_StructDecl:
@@ -69,7 +66,6 @@ enum CXChildVisitResult ClangToGraphMLBuilder::Job::top_level_cursor_visitor(
         auto& class_symbol =
             job->create_or_find_symbol_with_cursor<ClassSymbol>(
                 &job->shared_data->global_namespace, current_cursor);
-        job->shared_data->global_namespace.symbols.push_back(&class_symbol);
         break;
     }
     case CXCursorKind::CXCursor_CXXMethod: {
@@ -197,22 +193,26 @@ void ClangToGraphMLBuilder::Job::run(
 }
 
 namespace {
-/// Recurse through symbols, adding <edge source="" target=""/> entries for each
-/// depth first
-void symbol_recursive_edge_visitor(Symbol* symbol, pugi::xml_node& graph_node)
+/// Recurse through symbols, adding <edge source="" target=""/> entries and
+/// <node id= ""/> entries for each depth first
+void symbol_recursive_visitor(Symbol* symbol, pugi::xml_node& graph_node)
 {
     if (symbol->serialized) {
         return;
     }
     symbol->serialized = true;
 
+    graph_node.append_child("node").append_attribute("id").set_value(
+        symbol->usr);
+
     const size_t num_children = symbol->get_num_symbols_this_references();
-    for (size_t i = 0; i > num_children; ++i) {
+    for (size_t i = 0; i < num_children; ++i) {
         Symbol* target = symbol->get_symbol_this_references(i);
+        assert(target != symbol);
         auto node = graph_node.append_child("edge");
         node.append_attribute("source").set_value(symbol->usr);
+        symbol_recursive_visitor(target, graph_node);
         node.append_attribute("target").set_value(target->usr);
-        symbol_recursive_edge_visitor(target, graph_node);
     }
 }
 } // namespace
@@ -245,13 +245,11 @@ bool ClangToGraphMLBuilder::finish(std::ostream& output) noexcept
     graph.append_attribute("id").set_value("G");
     graph.append_attribute("edgedefault").set_value("directed");
 
-    // add all nodes
-    for (const auto& [usr, _] : this->m_data->symbols_by_usr) {
-        graph.append_child("node").append_attribute("id").set_value(usr);
-    }
+    // for display purposes, also i think an empty id is invalid
+    this->m_data->global_namespace.usr = "GLOBAL_NAMESPACE";
 
-    // add all edges
-    symbol_recursive_edge_visitor(&this->m_data->global_namespace, graph);
+    // add all nodes and edges
+    symbol_recursive_visitor(&this->m_data->global_namespace, graph);
 
     doc.save(output);
     return true;

@@ -7,6 +7,25 @@
 
 #include "aliases.h"
 
+/// Get the type of a type, resolving any namespaces, usings, and typedefs
+constexpr CXType get_cannonical_type(CXType type)
+{
+    while (type.kind == CXType_Elaborated || type.kind == CXType_Typedef) {
+        if (type.kind == CXType_Elaborated) {
+            type = clang_Type_getNamedType(type);
+        } else if (type.kind == CXType_Typedef) {
+            type = clang_getCanonicalType(type);
+        }
+    }
+    return type;
+}
+
+/// Get the type of a cursor, resolving any namespaces, usings, and typedefs
+constexpr CXType get_cannonical_type(CXCursor cursor)
+{
+    return get_cannonical_type(clang_getCursorType(cursor));
+}
+
 struct OwningCXString : private CXString
 {
     constexpr static OwningCXString clang_getCursorUSR(const CXCursor& cursor)
@@ -18,6 +37,17 @@ struct OwningCXString : private CXString
     clang_getCursorSpelling(const CXCursor& cursor)
     {
         return OwningCXString(::clang_getCursorSpelling(cursor));
+    }
+
+    constexpr static OwningCXString clang_getTypeSpelling(const CXType& type)
+    {
+        return OwningCXString(::clang_getTypeSpelling(type));
+    }
+
+    constexpr static OwningCXString
+    clang_getTypeKindSpelling(const CXTypeKind& kind)
+    {
+        return OwningCXString(::clang_getTypeKindSpelling(kind));
     }
 
     constexpr static OwningCXString clang_getFileName(const CXFile& cursor)

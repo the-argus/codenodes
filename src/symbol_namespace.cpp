@@ -17,6 +17,13 @@ enum CXChildVisitResult visitor(CXCursor input_cursor, CXCursor /* parent */,
     CXCursor cursor = clang_getCanonicalCursor(input_cursor);
     const enum CXCursorKind kind = clang_getCursorKind(cursor);
 
+    if (kind >= CXCursor_FirstAttr && kind <= CXCursor_LastAttr) {
+        return CXChildVisit_Recurse;
+    }
+    if (kind == CXCursor_LinkageSpec) {
+        return CXChildVisit_Recurse;
+    }
+
     switch (kind) {
     case CXCursorKind::CXCursor_FunctionDecl: {
         auto& function =
@@ -48,6 +55,21 @@ enum CXChildVisitResult visitor(CXCursor input_cursor, CXCursor /* parent */,
         args->symbols.push_back(&namespace_symbol);
         break;
     }
+    case CXCursor_ClassTemplate:
+    case CXCursor_FunctionTemplate:
+        // we dont handle templates yet
+    case CXCursor_VarDecl:
+        // we ignore variable declarations for now
+    case CXCursor_TypedefDecl:
+        // we dont keep track of who aliases what and pretend that everybody
+        // accessed a type without any typedefs or usings
+        break;
+    case CXCursor_UnexposedDecl:
+        std::ignore =
+            fprintf(stderr, "unexposed decl %s found in namespace %s\n",
+                    OwningCXString::clang_getCursorSpelling(cursor).c_str(),
+                    args->semantic_parent->usr.c_str());
+        break;
     default:
         std::ignore = fprintf(
             stderr, "unexpected cursor kind %d in namespace\n", int(kind));
@@ -66,7 +88,7 @@ bool NamespaceSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
     Args args{
         .job = job,
         .cursor = input_cursor,
-        .semantic_parent = semantic_parent,
+        .semantic_parent = this,
         .symbols = this->symbols,
     };
 

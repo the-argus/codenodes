@@ -32,7 +32,7 @@ Symbol* FunctionSymbol::get_symbol_this_references(size_t index) const
 bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
                                          const CXCursor& cursor)
 {
-    CXType type = clang_getCursorType(cursor);
+    CXType type = get_cannonical_type(cursor);
     const int num_args = clang_getNumArgTypes(type);
 
     if (num_args < 0) {
@@ -44,7 +44,7 @@ bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
         return false;
     }
 
-    CXType return_type = clang_getResultType(type);
+    CXType return_type = get_cannonical_type(clang_getResultType(type));
 
     this->return_type =
         clang_type_to_type_identifier(*job.shared_data, return_type);
@@ -61,7 +61,7 @@ bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
     this->parameter_types.reserve(num_args);
 
     for (unsigned i = 0; i < num_args; ++i) {
-        CXType arg_type = clang_getArgType(type, i);
+        CXType arg_type = get_cannonical_type(clang_getArgType(type, i));
         this->parameter_types.push_back(
             clang_type_to_type_identifier(*job.shared_data, arg_type));
     }

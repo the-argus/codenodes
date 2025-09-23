@@ -92,6 +92,10 @@ struct ClangToGraphMLBuilder::Job
         T* out = this->allocator.new_object<T>(semantic_parent, std::move(usr),
                                                cursor);
 
+        if (semantic_parent == &this->shared_data->global_namespace) {
+            this->shared_data->global_namespace.symbols.push_back(out);
+        }
+
         out->try_visit_children(*this, cursor);
 
         shared_data->symbols_by_usr[std::string_view(out->usr)] = out;
@@ -143,7 +147,7 @@ constexpr std::optional<UserDefinedTypeIdentifier>
 clang_type_to_user_defined_type(ClangToGraphMLBuilder::PersistentData& data,
                                 const CXType& type)
 {
-    auto decl = clang_getTypeDeclaration(type);
+    auto decl = clang_getTypeDeclaration(get_cannonical_type(type));
     Symbol* user_defined = data.try_get_symbol(
         OwningCXString::clang_getCursorUSR(decl).copy_to_string(
             data.temp_allocator));
@@ -160,7 +164,8 @@ constexpr std::optional<CArrayTypeIdentifier>
 clang_type_to_c_array_type_identifier(
     ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
 {
-    if (auto element_type = clang_getArrayElementType(type);
+    if (auto element_type =
+            get_cannonical_type(clang_getArrayElementType(type));
         element_type.kind != CXType_Invalid) {
 
         auto size = static_cast<size_t>(clang_getArraySize(type));
@@ -211,7 +216,7 @@ _clang_type_to_pointer_type_identifier_recursive_allocating(
     ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
 {
     using Out = PointerTypeIdentifier::PointerToPointerTypeIdentifier;
-    if (CXType pointee = clang_getPointeeType(type);
+    if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
 
         // allocate the new pointer object in chain
@@ -238,9 +243,9 @@ _clang_type_to_pointer_type_identifier_recursive_allocating(
             return out;
         }
 
-        std::ignore =
-            fprintf(stderr, "Unknow pointee type { kind: %d } for pointer\n",
-                    pointee.kind);
+        std::ignore = std::fprintf(
+            stderr, "Unknown pointee type { kind: %s } for pointer\n",
+            OwningCXString::clang_getTypeKindSpelling(pointee.kind).c_str());
     }
     return {};
 }
@@ -249,8 +254,9 @@ constexpr std::optional<PointerTypeIdentifier>
 clang_type_to_pointer_type_identifier(
     ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
 {
-    if (CXType pointee = clang_getPointeeType(type);
+    if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
+
         if (auto ptr =
                 _clang_type_to_pointer_type_identifier_recursive_allocating(
                     data, pointee);
@@ -265,9 +271,9 @@ clang_type_to_pointer_type_identifier(
             return PointerTypeIdentifier{concrete.value()};
         }
 
-        std::ignore =
-            fprintf(stderr, "Unknow pointee type { kind: %d } for pointer\n",
-                    pointee.kind);
+        std::ignore = std::fprintf(
+            stderr, "Unknown pointee type { kind: %s } for pointer\n",
+            OwningCXString::clang_getTypeKindSpelling(pointee.kind).c_str());
     }
     return {};
 }
@@ -306,8 +312,10 @@ clang_type_to_reference_type_identifier(
 
     const bool is_const = clang_isConstQualifiedType(type) > 0;
 
-    if (auto nonref = clang_type_to_nonreference_type_identifier(
-            data, clang_getPointeeType(type));
+    const CXType pointee_type = get_cannonical_type(clang_getPointeeType(type));
+
+    if (auto nonref =
+            clang_type_to_nonreference_type_identifier(data, pointee_type);
         nonref) {
         return ReferenceTypeIdentifier{
             .is_const = is_const,
@@ -316,10 +324,11 @@ clang_type_to_reference_type_identifier(
         };
     }
 
-    std::ignore = fprintf(stderr,
-                          "Unknown pointee type { kind: %d } for reference "
-                          "type, pretending it is a `const int&`\n",
-                          type.kind);
+    std::ignore =
+        fprintf(stderr,
+                "Unknown pointee type { kind: %s } for reference "
+                "type, pretending it is a `const int&`\n",
+                OwningCXString::clang_getTypeKindSpelling(type.kind).c_str());
     return ReferenceTypeIdentifier{
         .is_const = true,
         .kind = kind,
@@ -340,10 +349,11 @@ clang_type_to_type_identifier(ClangToGraphMLBuilder::PersistentData& data,
         return TypeIdentifier{std::move(ref.value())};
     }
 
-    std::ignore = fprintf(stderr,
-                          "Attempted to convert unknown type { kind: %d } to "
-                          "TypeIdentifier, pretending it is an int\n",
-                          type.kind);
+    std::ignore =
+        fprintf(stderr,
+                "Attempted to convert unknown type { kind: %s } to "
+                "TypeIdentifier, pretending it is an int\n",
+                OwningCXString::clang_getTypeKindSpelling(type.kind).c_str());
 
     return TypeIdentifier{NonReferenceTypeIdentifier{
         ConcreteTypeIdentifier{PrimitiveTypeType::Int32}}};
