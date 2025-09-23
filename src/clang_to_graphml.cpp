@@ -45,13 +45,31 @@ enum CXChildVisitResult ClangToGraphMLBuilder::Job::top_level_cursor_visitor(
     case CXCursorKind::CXCursor_Namespace: {
         auto& namespace_symbol =
             job->create_or_find_symbol_with_cursor<NamespaceSymbol>(
-                nullptr, current_cursor);
+                &job->shared_data->global_namespace, current_cursor);
+        job->shared_data->global_namespace.symbols.push_back(&namespace_symbol);
         break;
     }
     case CXCursorKind::CXCursor_FunctionDecl: {
         auto& function_symbol =
             job->create_or_find_symbol_with_cursor<FunctionSymbol>(
-                nullptr, current_cursor);
+                &job->shared_data->global_namespace, current_cursor);
+        job->shared_data->global_namespace.symbols.push_back(&function_symbol);
+        break;
+    }
+    case CXCursorKind::CXCursor_EnumDecl: {
+        auto& enum_symbol =
+            job->create_or_find_symbol_with_cursor<EnumTypeSymbol>(
+                &job->shared_data->global_namespace, current_cursor);
+        job->shared_data->global_namespace.symbols.push_back(&enum_symbol);
+        break;
+    }
+    case CXCursorKind::CXCursor_StructDecl:
+    case CXCursorKind::CXCursor_UnionDecl:
+    case CXCursorKind::CXCursor_ClassDecl: {
+        auto& class_symbol =
+            job->create_or_find_symbol_with_cursor<ClassSymbol>(
+                &job->shared_data->global_namespace, current_cursor);
+        job->shared_data->global_namespace.symbols.push_back(&class_symbol);
         break;
     }
     case CXCursorKind::CXCursor_CXXMethod: {
