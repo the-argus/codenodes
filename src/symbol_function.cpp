@@ -29,10 +29,8 @@ Symbol* FunctionSymbol::get_symbol_this_references(size_t index) const
     return view.begin()->try_get_symbol(); // nonnull yay
 }
 
-FunctionSymbol*
-FunctionSymbol::create_and_visit_children(Symbol* semantic_parent,
-                                          ClangToGraphMLBuilder::Job& job,
-                                          const CXCursor& cursor)
+bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                                         const CXCursor& cursor)
 {
     CXType type = clang_getCursorType(cursor);
     const int num_args = clang_getNumArgTypes(type);
@@ -43,17 +41,12 @@ FunctionSymbol::create_and_visit_children(Symbol* semantic_parent,
             "Non-function type { kind: %d } of cursor %s passed to "
             "FunctionSymbol::create_and_visit_children\n",
             type.kind, OwningCXString::clang_getCursorSpelling(cursor).c_str());
-        return nullptr;
+        return false;
     }
-
-    auto* out = job.allocator.new_object<FunctionSymbol>(
-        semantic_parent,
-        OwningCXString::clang_getCursorSpelling(cursor).copy_to_string(
-            job.allocator));
 
     CXType return_type = clang_getResultType(type);
 
-    out->return_type =
+    this->return_type =
         clang_type_to_type_identifier(*job.shared_data, return_type);
 
     if (clang_isFunctionTypeVariadic(type) == 1) {
@@ -61,19 +54,19 @@ FunctionSymbol::create_and_visit_children(Symbol* semantic_parent,
             fprintf(stderr,
                     "WARNING: Encountered variadic function %s, pretending it "
                     "has no arguments\n",
-                    out->name.c_str());
-        return out;
+                    this->name.c_str());
+        return true;
     }
 
-    out->parameter_types.reserve(num_args);
+    this->parameter_types.reserve(num_args);
 
     for (unsigned i = 0; i < num_args; ++i) {
         CXType arg_type = clang_getArgType(type, i);
-        out->parameter_types.push_back(
+        this->parameter_types.push_back(
             clang_type_to_type_identifier(*job.shared_data, arg_type));
     }
 
-    return out;
+    return true;
 }
 
 } // namespace cn

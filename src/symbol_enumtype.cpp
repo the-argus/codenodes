@@ -1,12 +1,12 @@
 #include "clang_to_graphml_impl.h"
 
 namespace cn {
-EnumTypeSymbol*
-EnumTypeSymbol::create_and_visit_children(Symbol* semantic_parent,
-                                          ClangToGraphMLBuilder::Job& job,
-                                          const CXCursor& cursor)
+bool EnumTypeSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                                         const CXCursor& cursor)
 {
-    return &job.create_or_find_symbol_with_cursor<EnumTypeSymbol>(
-        semantic_parent, cursor);
+    assert(!job.shared_data->symbols_by_usr.contains(
+        OwningCXString::clang_getCursorUSR(cursor).c_str()));
+
+    return true; // enums never reference other stuff
 }
 } // namespace cn

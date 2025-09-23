@@ -24,7 +24,7 @@ struct ClangToGraphMLBuilder::PersistentData
     // all symbols by their unique id
     Map<String, Symbol*> symbols_by_usr;
     // forest of definitions
-    NamespaceSymbol global_namespace{nullptr, String{}};
+    NamespaceSymbol global_namespace{nullptr, String{}, {}};
 
     /// For data which lives throughout the whole parse
     std::pmr::polymorphic_allocator<> allocator;
@@ -67,7 +67,8 @@ struct ClangToGraphMLBuilder::Job
     //                               CXClientData client_data);
 
     /// Creates or finds a symbol for a given cursor and returns a reference to
-    /// it
+    /// it. Also will try to visit its children, if they have not already been
+    /// visited.
     template <typename T>
         requires(!std::is_same_v<T, Symbol> && std::is_base_of_v<Symbol, T>)
     T& create_or_find_symbol_with_cursor(Symbol* semantic_parent,
@@ -78,12 +79,25 @@ struct ClangToGraphMLBuilder::Job
 
         if (shared_data->symbols_by_usr.contains(usr)) {
             Symbol* out = shared_data->symbols_by_usr[std::move(usr)];
+            out->try_visit_children(*this, cursor);
             assert(out->symbol_kind == T::kind);
             assert(out->semantic_parent == semantic_parent);
-            return *dynamic_cast<T*>(out);
+            T* upcasted = out->upcast<T>();
+            if (!upcasted) {
+                std::abort(); // release mode safety
+            }
+            return *upcasted;
         }
 
-        T* out = T::create_and_visit_children(semantic_parent, *this, cursor);
+        String name =
+            OwningCXString::clang_getCursorSpelling(cursor).copy_to_string(
+                this->allocator);
+
+        T* out = this->allocator.new_object<T>(semantic_parent, std::move(name),
+                                               cursor);
+
+        out->try_visit_children(*this, cursor);
+
         shared_data->symbols_by_usr[std::move(usr)] = out;
 
         return *out;

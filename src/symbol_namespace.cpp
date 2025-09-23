@@ -58,24 +58,20 @@ enum CXChildVisitResult visitor(CXCursor input_cursor, CXCursor /* parent */,
 }
 } // namespace
 
-NamespaceSymbol*
-NamespaceSymbol::create_and_visit_children(Symbol* semantic_parent,
-                                           ClangToGraphMLBuilder::Job& job,
-                                           const CXCursor& input_cursor)
+bool NamespaceSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                                          const CXCursor& input_cursor)
 {
-    auto* out = job.allocator.new_object<NamespaceSymbol>(
-        semantic_parent, OwningCXString::clang_getCursorSpelling(input_cursor)
-                             .copy_to_string(job.allocator));
+    // TODO: check if this is a forward decl?
 
     Args args{
         .job = job,
         .cursor = input_cursor,
-        .semantic_parent = out,
-        .symbols = out->symbols,
+        .semantic_parent = semantic_parent,
+        .symbols = this->symbols,
     };
 
     clang_visitChildren(input_cursor, visitor, &args);
 
-    return out;
+    return true;
 }
 } // namespace cn

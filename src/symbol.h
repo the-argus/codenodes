@@ -25,7 +25,8 @@ enum class SymbolKind : uint8_t
 struct Symbol
 {
     Symbol() = delete;
-    constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _name)
+    constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _name,
+                     std::optional<CXCursor> /* cursor */)
         : semantic_parent(_semantic_parent), symbol_kind(_kind),
           name(std::move(_name))
     {
@@ -40,6 +41,14 @@ struct Symbol
     [[nodiscard]] virtual size_t get_num_symbols_this_references() const = 0;
     [[nodiscard]] virtual Symbol*
     get_symbol_this_references(size_t index) const = 0;
+
+    constexpr void try_visit_children(ClangToGraphMLBuilder::Job& job,
+                                      const CXCursor& cursor)
+    {
+        if (!this->visited) {
+            this->visited = this->visit_children_impl(job, cursor);
+        }
+    }
 
     template <typename T> T* upcast() &
     {
@@ -64,9 +73,17 @@ struct Symbol
         }
     }
 
+  protected:
+    /// Return true if succeeded, ie. this isn't a forward decl
+    [[nodiscard]] virtual bool
+    visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                        const CXCursor& cursor) = 0;
+
+  public:
     SymbolKind symbol_kind;
     String name;
     Symbol* semantic_parent;
+    bool visited = false; // if this is a forward declaration it may not be
     Vector<Symbol*> symbols_that_reference_this;
 };
 
@@ -74,8 +91,9 @@ struct NamespaceSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Namespace;
 
-    constexpr NamespaceSymbol(Symbol* _semantic_parent, String&& _name)
-        : Symbol(_semantic_parent, SymbolKind::Namespace, std::move(_name))
+    constexpr NamespaceSymbol(Symbol* _semantic_parent, String&& _name,
+                              std::optional<CXCursor> cursor)
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor)
     {
     }
 
@@ -89,18 +107,29 @@ struct NamespaceSymbol : public Symbol
         return symbols.at(index);
     }
 
+  protected:
     // cursor must be of type CXCursor_Namespace
-    static NamespaceSymbol*
-    create_and_visit_children(Symbol* semantic_parent,
-                              ClangToGraphMLBuilder::Job& job,
-                              const CXCursor& cursor);
+    [[nodiscard]] bool visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                                           const CXCursor& cursor) final;
 
+  public:
     Vector<Symbol*> symbols;
 };
 
 struct ClassSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Aggregate;
+
+    // cursor for class symbol is not optional, that way passing
+    // semantic_parent, name, cursor is always valid constructor args in
+    // template like allocator->new_object(), but we can still handle the
+    // case with the root namespace where it has no parent cursor
+    constexpr ClassSymbol(Symbol* _semantic_parent, String&& _name,
+                          CXCursor cursor)
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor),
+          aggregate_kind(get_aggregate_kind_of_cursor(cursor))
+    {
+    }
 
     enum class AggregateKind : uint8_t
     {
@@ -125,13 +154,15 @@ struct ClassSymbol : public Symbol
         EnumTypeSymbol* symbol;
     };
 
+  protected:
     // cursor must be of type CXCursor_ClassDecl or CXCursor_UnionDecl or
     // CXCursor_StructDecl
-    static ClassSymbol*
-    create_and_visit_children(Symbol* semantic_parent,
-                              ClangToGraphMLBuilder::Job& job,
-                              const CXCursor& cursor);
+    [[nodiscard]] bool visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                                           const CXCursor& cursor) final;
 
+    AggregateKind get_aggregate_kind_of_cursor(CXCursor cursor);
+
+  public:
     [[nodiscard]] size_t get_num_symbols_this_references() const final;
     [[nodiscard]] Symbol* get_symbol_this_references(size_t index) const final;
 
@@ -146,12 +177,18 @@ struct EnumTypeSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Enum;
 
-    // cursor must be of type CXCursor_EnumDecl
-    static EnumTypeSymbol*
-    create_and_visit_children(Symbol* semantic_parent,
-                              ClangToGraphMLBuilder::Job& job,
-                              const CXCursor& cursor);
+    constexpr EnumTypeSymbol(Symbol* _semantic_parent, String&& _name,
+                             std::optional<CXCursor> cursor)
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor)
+    {
+    }
 
+  protected:
+    // cursor must be of type CXCursor_EnumDecl
+    [[nodiscard]] bool visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                                           const CXCursor& cursor) final;
+
+  public:
     [[nodiscard]] size_t get_num_symbols_this_references() const final
     {
         return 0;
@@ -168,20 +205,21 @@ struct FunctionSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Function;
 
-    constexpr FunctionSymbol(Symbol* semantic_parent, String&& name)
-        : Symbol(semantic_parent, kind, std::move(name))
+    constexpr FunctionSymbol(Symbol* semantic_parent, String&& name,
+                             std::optional<CXCursor> cursor)
+        : Symbol(semantic_parent, kind, std::move(name), cursor)
     {
     }
 
     [[nodiscard]] size_t get_num_symbols_this_references() const final;
     [[nodiscard]] Symbol* get_symbol_this_references(size_t index) const final;
 
+  protected:
     // cursor must be of type CXCursor_FunctionDecl
-    static FunctionSymbol*
-    create_and_visit_children(Symbol* semantic_parent,
-                              ClangToGraphMLBuilder::Job& job,
-                              const CXCursor& cursor);
+    [[nodiscard]] bool visit_children_impl(ClangToGraphMLBuilder::Job& job,
+                                           const CXCursor& cursor) final;
 
+  public:
     TypeIdentifier return_type;
     // if true, then parameter_types will not include the type of `this`, you
     // get that from .semantic_parent
