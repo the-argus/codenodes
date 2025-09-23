@@ -167,8 +167,8 @@ struct ClassSymbol : public Symbol
     [[nodiscard]] Symbol* get_symbol_this_references(size_t index) const final;
 
     AggregateKind aggregate_kind;
-    Vector<ClassSymbol> parent_classes;
-    Vector<ClassSymbol> inner_classes;
+    Vector<ClassReference> parent_classes;
+    Vector<ClassReference> inner_classes;
     Vector<FunctionReference> member_functions;
     Vector<EnumReference> inner_enums;
 };
