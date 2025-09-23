@@ -25,10 +25,10 @@ enum class SymbolKind : uint8_t
 struct Symbol
 {
     Symbol() = delete;
-    constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _name,
+    constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _usr,
                      std::optional<CXCursor> /* cursor */)
         : semantic_parent(_semantic_parent), symbol_kind(_kind),
-          name(std::move(_name))
+          usr(std::move(_usr))
     {
     }
 
@@ -81,9 +81,10 @@ struct Symbol
 
   public:
     SymbolKind symbol_kind;
-    String name;
+    String usr;
     Symbol* semantic_parent;
     bool visited = false; // if this is a forward declaration it may not be
+    bool serialized = false; // avoid recursion during serialization
     Vector<Symbol*> symbols_that_reference_this;
 };
 

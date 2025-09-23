@@ -22,7 +22,7 @@ struct ClangToGraphMLBuilder::PersistentData
 
     std::vector<OwningPointer<Job>> finished_jobs;
     // all symbols by their unique id
-    Map<String, Symbol*> symbols_by_usr;
+    Map<std::string_view, Symbol*> symbols_by_usr;
     // forest of definitions
     NamespaceSymbol global_namespace{nullptr, String{}, {}};
 
@@ -89,16 +89,12 @@ struct ClangToGraphMLBuilder::Job
             return *upcasted;
         }
 
-        String name =
-            OwningCXString::clang_getCursorSpelling(cursor).copy_to_string(
-                this->allocator);
-
-        T* out = this->allocator.new_object<T>(semantic_parent, std::move(name),
+        T* out = this->allocator.new_object<T>(semantic_parent, std::move(usr),
                                                cursor);
 
         out->try_visit_children(*this, cursor);
 
-        shared_data->symbols_by_usr[std::move(usr)] = out;
+        shared_data->symbols_by_usr[std::string_view(out->usr)] = out;
 
         return *out;
     }

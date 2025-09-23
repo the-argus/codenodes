@@ -1,8 +1,8 @@
 #ifndef __CODENODES_CLANG_TO_GRAPHML_H__
 #define __CODENODES_CLANG_TO_GRAPHML_H__
 
-#include <fstream>
 #include <memory_resource>
+#include <ostream>
 #include <span>
 
 namespace cn {

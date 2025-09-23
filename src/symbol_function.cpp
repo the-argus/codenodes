@@ -54,7 +54,7 @@ bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
             fprintf(stderr,
                     "WARNING: Encountered variadic function %s, pretending it "
                     "has no arguments\n",
-                    this->name.c_str());
+                    this->usr.c_str());
         return true;
     }
 

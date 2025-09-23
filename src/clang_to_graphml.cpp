@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstring>
+#include <pugixml.hpp>
 
 #include "clang_to_graphml_impl.h"
 
@@ -177,9 +178,65 @@ void ClangToGraphMLBuilder::Job::run(
     clang_disposeIndex(index);
 }
 
+namespace {
+/// Recurse through symbols, adding <edge source="" target=""/> entries for each
+/// depth first
+void symbol_recursive_edge_visitor(Symbol* symbol, pugi::xml_node& graph_node)
+{
+    if (symbol->serialized) {
+        return;
+    }
+    symbol->serialized = true;
+
+    const size_t num_children = symbol->get_num_symbols_this_references();
+    for (size_t i = 0; i > num_children; ++i) {
+        Symbol* target = symbol->get_symbol_this_references(i);
+        auto node = graph_node.append_child("edge");
+        node.append_attribute("source").set_value(symbol->usr);
+        node.append_attribute("target").set_value(target->usr);
+        symbol_recursive_edge_visitor(target, graph_node);
+    }
+}
+} // namespace
+
 bool ClangToGraphMLBuilder::finish(std::ostream& output) noexcept
 {
-    return false;
+    // function created mostly by following
+    // http://graphml.graphdrawing.org/primer/graphml-primer.html
+    pugi::xml_document doc;
+
+    pugi::xml_node root = doc.append_child();
+
+    /// rootmost element looks like this:
+    /// <graphml xmlns="http://graphml.graphdrawing.org/xmlns"
+    /// xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    /// xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns
+    /// http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+    ///</graphml>
+
+    root.set_name("graphml");
+    root.append_attribute("xmlns").set_value(
+        "http://graphml.graphdrawing.org/xmlns");
+    root.append_attribute("xmlns:xsi")
+        .set_value("http://www.w3.org/2001/XMLSchema-instance");
+    root.append_attribute("xsi:schemaLocation")
+        .set_value("http://graphml.graphdrawing.org/xmlns "
+                   "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd");
+
+    pugi::xml_node graph = root.append_child("graph");
+    graph.append_attribute("id").set_value("G");
+    graph.append_attribute("edgedefault").set_value("directed");
+
+    // add all nodes
+    for (const auto& [usr, _] : this->m_data->symbols_by_usr) {
+        graph.append_child("node").append_attribute("id").set_value(usr);
+    }
+
+    // add all edges
+    symbol_recursive_edge_visitor(&this->m_data->global_namespace, graph);
+
+    doc.save(output);
+    return true;
 }
 
 } // namespace cn
