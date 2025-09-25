@@ -2,6 +2,7 @@
 #define __CLANG_WRAPPER_H__
 
 #include <clang-c/Index.h>
+#include <cstring>
 #include <string_view>
 #include <utility>
 

@@ -24,7 +24,7 @@ struct ClangToGraphMLBuilder::PersistentData
     // all symbols by their unique id
     Map<std::string_view, Symbol*> symbols_by_usr;
     // forest of definitions
-    NamespaceSymbol global_namespace{nullptr, String{}, {}};
+    NamespaceSymbol global_namespace{nullptr, String{}, {}, String{}};
 
     /// For data which lives throughout the whole parse
     std::pmr::polymorphic_allocator<> allocator;
@@ -89,8 +89,25 @@ struct ClangToGraphMLBuilder::Job
             return *upcasted;
         }
 
+        String displayName{allocator};
+        if (semantic_parent && !semantic_parent->displayName.empty()) {
+            constexpr std::string_view delimiter = "::";
+            const std::string_view parentDisplayName =
+                semantic_parent->displayName;
+            auto ourName = OwningCXString::clang_getCursorDisplayName(cursor);
+            const size_t ourNameLength = strlen(ourName.c_str());
+            displayName.reserve(ourNameLength + delimiter.size() +
+                                parentDisplayName.size());
+            displayName.append(parentDisplayName);
+            displayName.append(delimiter);
+            displayName.append(ourName.c_str(), ourNameLength);
+        } else {
+            displayName = OwningCXString::clang_getCursorDisplayName(cursor)
+                              .copy_to_string(allocator);
+        }
+
         T* out = this->allocator.new_object<T>(semantic_parent, std::move(usr),
-                                               cursor);
+                                               cursor, std::move(displayName));
 
         if (semantic_parent == &this->shared_data->global_namespace) {
             this->shared_data->global_namespace.symbols.push_back(out);

@@ -42,6 +42,7 @@
             libxml2
             valgrind
             gdb
+            gephi
             (pkgs.writeShellScriptBin "configure" ''
               cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug -S . -B out -G "Unix Makefiles"
             '')
@@ -49,10 +50,10 @@
               cmake --build out --parallel
             '')
             (pkgs.writeShellScriptBin "run" ''
-              ./out/codenodes -o test $@
+              ./out/codenodes -o test.graphml $@
             '')
             (pkgs.writeShellScriptBin "debug" ''
-              gdb --args ./out/codenodes -o test $@
+              gdb --args ./out/codenodes -o test.graphml $@
             '')
           ];
         };

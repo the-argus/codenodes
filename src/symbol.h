@@ -26,9 +26,10 @@ struct Symbol
 {
     Symbol() = delete;
     constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _usr,
-                     std::optional<CXCursor> /* cursor */)
+                     std::optional<CXCursor> /* cursor */,
+                     String&& _displayName)
         : semantic_parent(_semantic_parent), symbol_kind(_kind),
-          usr(std::move(_usr))
+          usr(std::move(_usr)), displayName(std::move(_displayName))
     {
     }
 
@@ -82,8 +83,9 @@ struct Symbol
   public:
     SymbolKind symbol_kind;
     String usr;
+    String displayName;
     Symbol* semantic_parent;
-    bool visited = false; // if this is a forward declaration it may not be
+    bool visited = false;    // if this is a forward declaration it may not be
     bool serialized = false; // avoid recursion during serialization
     Vector<Symbol*> symbols_that_reference_this;
 };
@@ -93,8 +95,10 @@ struct NamespaceSymbol : public Symbol
     constexpr static auto kind = SymbolKind::Namespace;
 
     constexpr NamespaceSymbol(Symbol* _semantic_parent, String&& _name,
-                              std::optional<CXCursor> cursor)
-        : Symbol(_semantic_parent, kind, std::move(_name), cursor)
+                              std::optional<CXCursor> cursor,
+                              String&& _displayName)
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
+                 std::move(_displayName))
     {
     }
 
@@ -126,8 +130,9 @@ struct ClassSymbol : public Symbol
     // template like allocator->new_object(), but we can still handle the
     // case with the root namespace where it has no parent cursor
     constexpr ClassSymbol(Symbol* _semantic_parent, String&& _name,
-                          CXCursor cursor)
-        : Symbol(_semantic_parent, kind, std::move(_name), cursor),
+                          CXCursor cursor, String&& _displayName)
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
+                 std::move(_displayName)),
           aggregate_kind(get_aggregate_kind_of_cursor(cursor))
     {
     }
@@ -179,8 +184,10 @@ struct EnumTypeSymbol : public Symbol
     constexpr static auto kind = SymbolKind::Enum;
 
     constexpr EnumTypeSymbol(Symbol* _semantic_parent, String&& _name,
-                             std::optional<CXCursor> cursor)
-        : Symbol(_semantic_parent, kind, std::move(_name), cursor)
+                             std::optional<CXCursor> cursor,
+                             String&& _displayName)
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
+                 std::move(_displayName))
     {
     }
 
@@ -207,8 +214,10 @@ struct FunctionSymbol : public Symbol
     constexpr static auto kind = SymbolKind::Function;
 
     constexpr FunctionSymbol(Symbol* semantic_parent, String&& name,
-                             std::optional<CXCursor> cursor)
-        : Symbol(semantic_parent, kind, std::move(name), cursor)
+                             std::optional<CXCursor> cursor,
+                             String&& _displayName)
+        : Symbol(semantic_parent, kind, std::move(name), cursor,
+                 std::move(_displayName))
     {
     }
 

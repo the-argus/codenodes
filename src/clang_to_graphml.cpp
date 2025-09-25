@@ -203,16 +203,16 @@ void symbol_recursive_visitor(Symbol* symbol, pugi::xml_node& graph_node)
     symbol->serialized = true;
 
     graph_node.append_child("node").append_attribute("id").set_value(
-        symbol->usr);
+        symbol->displayName);
 
     const size_t num_children = symbol->get_num_symbols_this_references();
     for (size_t i = 0; i < num_children; ++i) {
         Symbol* target = symbol->get_symbol_this_references(i);
         assert(target != symbol);
         auto node = graph_node.append_child("edge");
-        node.append_attribute("source").set_value(symbol->usr);
+        node.append_attribute("source").set_value(symbol->displayName);
         symbol_recursive_visitor(target, graph_node);
-        node.append_attribute("target").set_value(target->usr);
+        node.append_attribute("target").set_value(target->displayName);
     }
 }
 } // namespace
@@ -246,7 +246,7 @@ bool ClangToGraphMLBuilder::finish(std::ostream& output) noexcept
     graph.append_attribute("edgedefault").set_value("directed");
 
     // for display purposes, also i think an empty id is invalid
-    this->m_data->global_namespace.usr = "GLOBAL_NAMESPACE";
+    this->m_data->global_namespace.displayName = "GLOBAL_NAMESPACE";
 
     // add all nodes and edges
     symbol_recursive_visitor(&this->m_data->global_namespace, graph);
