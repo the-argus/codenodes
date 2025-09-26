@@ -162,6 +162,7 @@ constexpr std::optional<PrimitiveTypeType>
 clang_type_to_primitive_type(const CXType& type)
 {
     switch (type.kind) {
+    case CXType_SChar: // TODO: what is the difference between schar and char_s
     case CXType_Char_S:
         return PrimitiveTypeType::Int8;
     case CXType_Short:
@@ -169,6 +170,7 @@ clang_type_to_primitive_type(const CXType& type)
     case CXType_Int:
         return PrimitiveTypeType::Int32;
     case CXType_Long:
+    case CXType_LongLong:
         return PrimitiveTypeType::Int64;
     case CXType_Char_U:
         return PrimitiveTypeType::UInt8;
@@ -177,6 +179,7 @@ clang_type_to_primitive_type(const CXType& type)
     case CXType_UInt:
         return PrimitiveTypeType::UInt32;
     case CXType_ULong:
+    case CXType_ULongLong:
         return PrimitiveTypeType::UInt64;
     case CXType_Bool:
         return PrimitiveTypeType::Bool;
