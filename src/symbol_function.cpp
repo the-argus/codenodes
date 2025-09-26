@@ -1,6 +1,5 @@
 #include "clang_to_graphml_impl.h"
 #include <algorithm>
-#include <ranges>
 
 namespace cn {
 size_t FunctionSymbol::get_num_symbols_this_references() const
