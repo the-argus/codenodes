@@ -27,8 +27,7 @@ enum CXChildVisitResult visitor(CXCursor input_cursor, CXCursor /* parent */,
     switch (kind) {
     case CXCursorKind::CXCursor_FunctionDecl: {
         auto& function =
-            args->job.create_or_find_symbol_with_cursor<FunctionSymbol>(
-                args->semantic_parent, cursor);
+            args->job.create_or_find_symbol_with_cursor<FunctionSymbol>(cursor);
         args->symbols.push_back(&function);
         break;
     }
@@ -36,22 +35,20 @@ enum CXChildVisitResult visitor(CXCursor input_cursor, CXCursor /* parent */,
     case CXCursor_ClassDecl:
     case CXCursor_StructDecl: {
         auto& class_symbol =
-            args->job.create_or_find_symbol_with_cursor<ClassSymbol>(
-                args->semantic_parent, cursor);
+            args->job.create_or_find_symbol_with_cursor<ClassSymbol>(cursor);
         args->symbols.push_back(&class_symbol);
         break;
     }
     case CXCursor_EnumDecl: {
         auto& enum_symbol =
-            args->job.create_or_find_symbol_with_cursor<EnumTypeSymbol>(
-                args->semantic_parent, cursor);
+            args->job.create_or_find_symbol_with_cursor<EnumTypeSymbol>(cursor);
         args->symbols.push_back(&enum_symbol);
         break;
     }
     case CXCursor_Namespace: {
         auto& namespace_symbol =
             args->job.create_or_find_symbol_with_cursor<NamespaceSymbol>(
-                args->semantic_parent, cursor);
+                cursor);
         args->symbols.push_back(&namespace_symbol);
         break;
     }

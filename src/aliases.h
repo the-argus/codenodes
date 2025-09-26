@@ -31,4 +31,14 @@ OwningPointer<T> make_owning(Allocator& allocator, ConstructorArgs&&... args)
         PMRDeleter<T>{std::addressof(allocator)});
 }
 
+template <typename T, typename... ConstructorArgs>
+    requires std::is_constructible_v<T, ConstructorArgs...>
+std::shared_ptr<T> make_shared(Allocator& allocator, ConstructorArgs&&... args)
+{
+    return std::shared_ptr<T>{
+        allocator.new_object<T>(std::forward<ConstructorArgs>(args)...),
+        PMRDeleter<T>{std::addressof(allocator)},
+    };
+}
+
 #endif

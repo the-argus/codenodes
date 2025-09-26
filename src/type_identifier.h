@@ -1,10 +1,9 @@
 #ifndef __TYPE_IDENTIFIER_H__
 #define __TYPE_IDENTIFIER_H__
 
+#include "aliases.h"
 #include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <memory>
 #include <variant>
 
 namespace cn {
@@ -33,17 +32,55 @@ enum class ReferenceKind : uint8_t
 };
 
 struct Symbol;
+struct TypeIdentifier;
+
+struct SymbolInfo
+{
+    Symbol* symbol_queried;
+    size_t total_symbols;
+};
 
 /// not a primitive type or pointer or reference or array or type alias
 struct UserDefinedTypeIdentifier
 {
     Symbol* symbol;
+
+    [[nodiscard]] SymbolInfo try_get_symbol_info(size_t index) const
+    {
+        return {
+            .symbol_queried = index == 0 ? symbol : nullptr,
+            .total_symbols = symbol == nullptr ? 0UL : 1UL,
+        };
+    }
+};
+
+struct FunctionProtoTypeIdentifier
+{
+    Vector<std::shared_ptr<TypeIdentifier>> types;
+
+    [[nodiscard]] constexpr SymbolInfo try_get_symbol_info(size_t index) const;
 };
 
 struct CArrayTypeIdentifier
 {
-    std::variant<UserDefinedTypeIdentifier, PrimitiveTypeType> contents_type;
+    std::variant<FunctionProtoTypeIdentifier, UserDefinedTypeIdentifier,
+                 PrimitiveTypeType>
+        contents_type;
     size_t size{};
+
+    [[nodiscard]] SymbolInfo try_get_symbol_info(size_t index) const
+    {
+        return std::visit(
+            [index](const auto& iden) {
+                if constexpr (std::is_same_v<decltype(iden),
+                                             const PrimitiveTypeType&>) {
+                    return SymbolInfo{};
+                } else {
+                    return iden.try_get_symbol_info(index);
+                }
+            },
+            contents_type);
+    }
 };
 
 struct ConcreteTypeIdentifier
@@ -51,21 +88,59 @@ struct ConcreteTypeIdentifier
     std::variant<PrimitiveTypeType, UserDefinedTypeIdentifier,
                  CArrayTypeIdentifier>
         variant;
+
+    [[nodiscard]] SymbolInfo try_get_symbol_info(size_t index) const
+    {
+        return std::visit(
+            [index](const auto& iden) {
+                if constexpr (std::is_same_v<decltype(iden),
+                                             const PrimitiveTypeType&>) {
+                    return SymbolInfo{};
+                } else {
+                    return iden.try_get_symbol_info(index);
+                }
+            },
+            variant);
+    }
 };
 
 struct PointerTypeIdentifier
 {
     using PointerToPointerTypeIdentifier =
-        std::unique_ptr<PointerTypeIdentifier,
-                        std::function<void(PointerTypeIdentifier*)>>;
+        std::shared_ptr<PointerTypeIdentifier>;
     // either a pointer to another pointer, or a pointer to a concrete thing
-    std::variant<ConcreteTypeIdentifier, PointerToPointerTypeIdentifier>
+    std::variant<ConcreteTypeIdentifier, PointerToPointerTypeIdentifier,
+                 FunctionProtoTypeIdentifier>
         pointee_type;
+
+    [[nodiscard]] SymbolInfo try_get_symbol_info(size_t index) const
+    {
+        return std::visit(
+            [index](const auto& iden) {
+                if constexpr (std::is_same_v<
+                                  decltype(iden),
+                                  const PointerToPointerTypeIdentifier&>) {
+                    return iden->try_get_symbol_info(index);
+                } else {
+                    return iden.try_get_symbol_info(index);
+                }
+            },
+            pointee_type);
+    }
 };
 
 struct NonReferenceTypeIdentifier
 {
     std::variant<PointerTypeIdentifier, ConcreteTypeIdentifier> variant;
+
+    [[nodiscard]] SymbolInfo try_get_symbol_info(size_t index) const
+    {
+        return std::visit(
+            [index](const auto& iden) {
+                return iden.try_get_symbol_info(index);
+            },
+            variant);
+    }
 };
 
 struct ReferenceTypeIdentifier
@@ -73,105 +148,51 @@ struct ReferenceTypeIdentifier
     bool is_const;
     ReferenceKind kind;
     NonReferenceTypeIdentifier referenced_type;
+
+    [[nodiscard]] SymbolInfo try_get_symbol_info(size_t index) const
+    {
+        return referenced_type.try_get_symbol_info(index);
+    }
 };
 
 struct TypeIdentifier
 {
-    [[nodiscard]] Symbol* try_get_symbol() const
+    [[nodiscard]] Symbol* try_get_symbol(size_t index) const
     {
         return std::visit(
-            [](const auto& iden) { return ref_or_nonref_visitor(iden); },
-            variant);
+                   [index](const auto& iden) {
+                       return iden.try_get_symbol_info(index);
+                   },
+                   variant)
+            .symbol_queried;
+    }
+
+    [[nodiscard]] size_t get_num_symbols() const
+    {
+        return std::visit(
+                   [](const auto& iden) { return iden.try_get_symbol_info(0); },
+                   variant)
+            .total_symbols;
     }
 
     // the sum of all human knowledge
     std::variant<ReferenceTypeIdentifier, NonReferenceTypeIdentifier> variant;
-
-  private:
-    static Symbol*
-    user_def_or_primitive_recursive_visitor(const PrimitiveTypeType& iden)
-    {
-        return primitive_or_user_def_or_carray_recursive_visitor(iden);
-    }
-
-    static Symbol* user_def_or_primitive_recursive_visitor(
-        const UserDefinedTypeIdentifier& iden)
-    {
-        return primitive_or_user_def_or_carray_recursive_visitor(iden);
-    }
-
-    static Symbol* primitive_or_user_def_or_carray_recursive_visitor(
-        const PrimitiveTypeType& /*type*/)
-    {
-        return nullptr;
-    }
-
-    static Symbol* primitive_or_user_def_or_carray_recursive_visitor(
-        const UserDefinedTypeIdentifier& iden)
-    {
-        return iden.symbol;
-    }
-
-    static Symbol* primitive_or_user_def_or_carray_recursive_visitor(
-        const CArrayTypeIdentifier& iden)
-    {
-        return std::visit(
-            [](const auto& iden) {
-                return user_def_or_primitive_recursive_visitor(iden);
-            },
-            iden.contents_type);
-    }
-
-    static Symbol* pointee_type_recursive_visitor(
-        const std::unique_ptr<PointerTypeIdentifier,
-                              std::function<void(PointerTypeIdentifier*)>>&
-            pointer_iden)
-    {
-        return concrete_or_pointer_recursive_visitor(*pointer_iden);
-    }
-
-    static Symbol*
-    pointee_type_recursive_visitor(const ConcreteTypeIdentifier& concrete_iden)
-    {
-        return concrete_or_pointer_recursive_visitor(concrete_iden);
-    }
-
-    static Symbol* concrete_or_pointer_recursive_visitor(
-        const PointerTypeIdentifier& pointer_iden)
-    {
-        return std::visit(
-            [](const auto& iden) {
-                return pointee_type_recursive_visitor(iden);
-            },
-            pointer_iden.pointee_type);
-    }
-
-    static Symbol* concrete_or_pointer_recursive_visitor(
-        const ConcreteTypeIdentifier& concrete_iden)
-    {
-        return std::visit(
-            [](const auto& iden) {
-                return primitive_or_user_def_or_carray_recursive_visitor(iden);
-            },
-            concrete_iden.variant);
-    }
-
-    static Symbol* ref_or_nonref_visitor(const ReferenceTypeIdentifier& ref)
-    {
-        return ref_or_nonref_visitor(ref.referenced_type);
-    }
-
-    static Symbol*
-    ref_or_nonref_visitor(const NonReferenceTypeIdentifier& nonref)
-    {
-        return std::visit(
-            [](const auto& iden) {
-                return concrete_or_pointer_recursive_visitor(iden);
-            },
-            nonref.variant);
-    }
 };
 
+[[nodiscard]] constexpr SymbolInfo
+FunctionProtoTypeIdentifier::try_get_symbol_info(size_t index) const
+{
+    size_t num_symbols = 0;
+    for (const auto& iden : types) {
+        num_symbols += iden->get_num_symbols();
+    }
+    return {
+        .symbol_queried = index < types.size()
+                              ? types.at(index)->try_get_symbol(index)
+                              : nullptr,
+        .total_symbols = num_symbols,
+    };
+}
 } // namespace cn
 
 #endif

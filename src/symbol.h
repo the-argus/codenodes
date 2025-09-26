@@ -47,7 +47,12 @@ struct Symbol
                                       const CXCursor& cursor)
     {
         if (!this->visited) {
-            this->visited = this->visit_children_impl(job, cursor);
+            // prevent recursive visiting, technically we have not been visited
+            // yet but should be fine, usually if recursion was going to happen
+            // it's because we weren't a forward declaration anyways
+            this->visited = true;
+            bool actually_visited = this->visit_children_impl(job, cursor);
+            this->visited = actually_visited;
         }
     }
 

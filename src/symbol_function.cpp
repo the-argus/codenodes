@@ -8,25 +8,36 @@ size_t FunctionSymbol::get_num_symbols_this_references() const
     return std::ranges::fold_left(
                this->parameter_types, 0UL,
                [](size_t left, const TypeIdentifier& right) -> size_t {
-                   return left + size_t(right.try_get_symbol() != nullptr);
+                   return left + right.get_num_symbols();
                }) +
-           size_t(this->return_type.try_get_symbol() != nullptr);
+           this->return_type.get_num_symbols();
 }
 
 Symbol* FunctionSymbol::get_symbol_this_references(size_t index) const
 {
-    constexpr auto has_symbol = [](const TypeIdentifier& iden) -> bool {
-        return iden.try_get_symbol();
-    };
+    size_t iter = 0;
 
-    if (index == 0 && this->return_type.try_get_symbol() != nullptr) {
-        return this->return_type.try_get_symbol();
+    for (const TypeIdentifier& iden : this->parameter_types) {
+        const size_t num_symbols = iden.get_num_symbols();
+        if (iter + num_symbols <= index) {
+            iter += num_symbols;
+            continue;
+        }
+        const size_t sub_index = index - iter;
+        assert(sub_index < num_symbols);
+        auto* out = iden.try_get_symbol(sub_index);
+        if (out == nullptr) {
+            auto* out2 = iden.try_get_symbol(sub_index);
+        }
+        assert(out);
+        return out;
     }
-
-    auto view = this->parameter_types | std::ranges::views::filter(has_symbol) |
-                std::ranges::views::drop(index);
-    assert(view.begin() != view.end());
-    return view.begin()->try_get_symbol(); // nonnull yay
+    const size_t num_symbols = this->return_type.get_num_symbols();
+    const size_t sub_index = index - iter;
+    assert(sub_index < num_symbols);
+    auto* out = this->return_type.try_get_symbol(sub_index);
+    assert(out);
+    return out;
 }
 
 bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
@@ -46,8 +57,7 @@ bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
 
     CXType return_type = get_cannonical_type(clang_getResultType(type));
 
-    this->return_type =
-        clang_type_to_type_identifier(*job.shared_data, return_type);
+    this->return_type = clang_type_to_type_identifier(job, return_type);
 
     if (clang_isFunctionTypeVariadic(type) == 1) {
         std::ignore =
@@ -63,7 +73,7 @@ bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
     for (unsigned i = 0; i < num_args; ++i) {
         CXType arg_type = get_cannonical_type(clang_getArgType(type, i));
         this->parameter_types.push_back(
-            clang_type_to_type_identifier(*job.shared_data, arg_type));
+            clang_type_to_type_identifier(job, arg_type));
     }
 
     return true;

@@ -40,6 +40,12 @@ struct OwningCXString : private CXString
         return OwningCXString(::clang_getCursorSpelling(cursor));
     }
 
+    constexpr static OwningCXString
+    clang_getCursorKindSpelling(const CXCursorKind& kind)
+    {
+        return OwningCXString(::clang_getCursorKindSpelling(kind));
+    }
+
     constexpr static OwningCXString clang_getTypeSpelling(const CXType& type)
     {
         return OwningCXString(::clang_getTypeSpelling(type));

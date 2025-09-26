@@ -30,19 +30,6 @@ struct ClangToGraphMLBuilder::PersistentData
     std::pmr::polymorphic_allocator<> allocator;
     std::pmr::monotonic_buffer_resource temp_resource;
     std::pmr::polymorphic_allocator<> temp_allocator;
-
-    [[nodiscard]] Symbol* try_get_symbol(const String& usr)
-    {
-        if (usr.empty()) {
-            return nullptr;
-        }
-        if (symbols_by_usr.contains(usr)) {
-            auto* out = symbols_by_usr[usr];
-            assert(out);
-            return out;
-        }
-        return nullptr;
-    }
 };
 
 struct ClangToGraphMLBuilder::Job
@@ -66,13 +53,47 @@ struct ClangToGraphMLBuilder::Job
     //                               unsigned include_len,
     //                               CXClientData client_data);
 
+    ///  Try to find a cursor with an unknown type. May fail if the cursor is
+    ///  not of a type which can be represented by a Symbol
+    Symbol*
+    create_or_find_symbol_with_cursor_runtime_known_type(CXCursor cursor)
+    {
+        switch (cursor.kind) {
+        case CXCursor_UnionDecl:
+        case CXCursor_ClassDecl:
+        case CXCursor_StructDecl:
+            return &create_or_find_symbol_with_cursor<ClassSymbol>(cursor);
+            break;
+        case CXCursor_Namespace:
+            return &create_or_find_symbol_with_cursor<NamespaceSymbol>(cursor);
+            break;
+        case CXCursor_EnumDecl:
+            return &create_or_find_symbol_with_cursor<EnumTypeSymbol>(cursor);
+            break;
+        case CXCursor_FunctionDecl:
+            return &create_or_find_symbol_with_cursor<FunctionSymbol>(cursor);
+            break;
+        case CXCursor_TranslationUnit:
+        case CXCursor_NoDeclFound:
+            break;
+        default:
+            std::ignore = std::fprintf(
+                stderr,
+                "WARNING: unexpected semantic parent cursor %s with kind %s\n",
+                OwningCXString::clang_getCursorSpelling(cursor).c_str(),
+                OwningCXString::clang_getCursorKindSpelling(cursor.kind)
+                    .c_str());
+            break;
+        }
+        return nullptr;
+    }
+
     /// Creates or finds a symbol for a given cursor and returns a reference to
     /// it. Also will try to visit its children, if they have not already been
     /// visited.
     template <typename T>
         requires(!std::is_same_v<T, Symbol> && std::is_base_of_v<Symbol, T>)
-    T& create_or_find_symbol_with_cursor(Symbol* semantic_parent,
-                                         CXCursor cursor)
+    T& create_or_find_symbol_with_cursor(CXCursor cursor)
     {
         auto usr = OwningCXString::clang_getCursorUSR(cursor).copy_to_string(
             allocator);
@@ -81,13 +102,23 @@ struct ClangToGraphMLBuilder::Job
             Symbol* out = shared_data->symbols_by_usr[std::move(usr)];
             out->try_visit_children(*this, cursor);
             assert(out->symbol_kind == T::kind);
-            assert(out->semantic_parent == semantic_parent);
             T* upcasted = out->upcast<T>();
             if (!upcasted) {
                 std::abort(); // release mode safety
             }
             return *upcasted;
         }
+
+        CXCursor semantic_parent_cursor = clang_getCursorSemanticParent(cursor);
+        // skip linkage specs, we want namespaces or translation units
+        while (semantic_parent_cursor.kind == CXCursor_LinkageSpec) {
+            semantic_parent_cursor =
+                clang_getCursorSemanticParent(semantic_parent_cursor);
+        }
+        Symbol* semantic_parent = nullptr;
+
+        semantic_parent = create_or_find_symbol_with_cursor_runtime_known_type(
+            semantic_parent_cursor);
 
         String displayName{allocator};
         if (semantic_parent && !semantic_parent->displayName.empty()) {
@@ -109,13 +140,15 @@ struct ClangToGraphMLBuilder::Job
         T* out = this->allocator.new_object<T>(semantic_parent, std::move(usr),
                                                cursor, std::move(displayName));
 
-        if (semantic_parent == &this->shared_data->global_namespace) {
+        if (semantic_parent == nullptr) {
             this->shared_data->global_namespace.symbols.push_back(out);
         }
 
-        out->try_visit_children(*this, cursor);
-
+        // NOTE: insert beforehand so that way children can find us when looking
+        // for their semantic parent
         shared_data->symbols_by_usr[std::string_view(out->usr)] = out;
+
+        out->try_visit_children(*this, cursor);
 
         return *out;
     }
@@ -160,15 +193,22 @@ clang_type_to_primitive_type(const CXType& type)
     }
 }
 
+constexpr TypeIdentifier
+clang_type_to_type_identifier(ClangToGraphMLBuilder::Job& job,
+                              const CXType& type);
+
 constexpr std::optional<UserDefinedTypeIdentifier>
-clang_type_to_user_defined_type(ClangToGraphMLBuilder::PersistentData& data,
+clang_type_to_user_defined_type(ClangToGraphMLBuilder::Job& job,
                                 const CXType& type)
 {
-    auto decl = clang_getTypeDeclaration(get_cannonical_type(type));
-    Symbol* user_defined = data.try_get_symbol(
-        OwningCXString::clang_getCursorUSR(decl).copy_to_string(
-            data.temp_allocator));
-    data.temp_resource.release();
+    CXCursor decl = clang_getTypeDeclaration(get_cannonical_type(type));
+
+    if (clang_Cursor_isNull(decl) != 0) {
+        return {};
+    }
+
+    Symbol* user_defined =
+        job.create_or_find_symbol_with_cursor_runtime_known_type(decl);
 
     if (user_defined == nullptr) {
         return {};
@@ -178,8 +218,8 @@ clang_type_to_user_defined_type(ClangToGraphMLBuilder::PersistentData& data,
 }
 
 constexpr std::optional<CArrayTypeIdentifier>
-clang_type_to_c_array_type_identifier(
-    ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
+clang_type_to_c_array_type_identifier(ClangToGraphMLBuilder::Job& job,
+                                      const CXType& type)
 {
     if (auto element_type =
             get_cannonical_type(clang_getArrayElementType(type));
@@ -192,16 +232,17 @@ clang_type_to_c_array_type_identifier(
                                         .size = size};
         }
 
-        if (auto user_defined = clang_type_to_user_defined_type(data, type);
+        if (auto user_defined = clang_type_to_user_defined_type(job, type);
             user_defined) {
             return CArrayTypeIdentifier{.contents_type = user_defined.value(),
                                         .size = size};
         }
 
-        std::ignore = fprintf(stderr,
-                              "Unknown type { kind: %d } in array, saying that "
-                              "it is an array of integers\n",
-                              type.kind);
+        std::ignore = fprintf(
+            stderr,
+            "Unknown type { kind: %s } in array, saying that "
+            "it is an array of integers\n",
+            OwningCXString::clang_getTypeKindSpelling(type.kind).c_str());
         return CArrayTypeIdentifier{.contents_type = PrimitiveTypeType::Int32,
                                     .size = size};
     }
@@ -209,44 +250,40 @@ clang_type_to_c_array_type_identifier(
 }
 
 constexpr std::optional<ConcreteTypeIdentifier>
-clang_type_to_concrete_type_identifier(
-    ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
+clang_type_to_concrete_type_identifier(ClangToGraphMLBuilder::Job& job,
+                                       const CXType& type)
 {
     if (const auto primitive = clang_type_to_primitive_type(type); primitive) {
         return ConcreteTypeIdentifier{primitive.value()};
     }
 
-    if (const auto carray = clang_type_to_c_array_type_identifier(data, type);
+    if (const auto carray = clang_type_to_c_array_type_identifier(job, type);
         carray) {
         return ConcreteTypeIdentifier{carray.value()};
     }
 
-    if (const auto carray = clang_type_to_c_array_type_identifier(data, type);
-        carray) {
-        return ConcreteTypeIdentifier{carray.value()};
+    if (auto user_defined = clang_type_to_user_defined_type(job, type);
+        user_defined) {
+        return ConcreteTypeIdentifier{user_defined.value()};
     }
     return {};
 }
 
 constexpr PointerTypeIdentifier::PointerToPointerTypeIdentifier
 _clang_type_to_pointer_type_identifier_recursive_allocating(
-    ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
+    ClangToGraphMLBuilder::Job& job, const CXType& type)
 {
     using Out = PointerTypeIdentifier::PointerToPointerTypeIdentifier;
     if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
 
         // allocate the new pointer object in chain
-        auto* iden = data.allocator.new_object<PointerTypeIdentifier>();
-        auto deleter =
-            [allocator = data.allocator](PointerTypeIdentifier* ptr) mutable {
-                allocator.delete_object(ptr);
-            };
-        Out out(iden, std::move(deleter));
+        Out out =
+            make_owning<PointerTypeIdentifier>(job.shared_data->allocator);
 
         if (auto ptr =
                 _clang_type_to_pointer_type_identifier_recursive_allocating(
-                    data, pointee);
+                    job, pointee);
             ptr) {
             // this is also a pointer to a pointer type
             out->pointee_type = std::move(ptr);
@@ -254,9 +291,9 @@ _clang_type_to_pointer_type_identifier_recursive_allocating(
         }
 
         if (auto concrete =
-                clang_type_to_concrete_type_identifier(data, pointee);
+                clang_type_to_concrete_type_identifier(job, pointee);
             concrete) {
-            out->pointee_type = concrete.value();
+            out->pointee_type = std::move(concrete.value());
             return out;
         }
 
@@ -268,24 +305,44 @@ _clang_type_to_pointer_type_identifier_recursive_allocating(
 }
 
 constexpr std::optional<PointerTypeIdentifier>
-clang_type_to_pointer_type_identifier(
-    ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
+clang_type_to_pointer_type_identifier(ClangToGraphMLBuilder::Job& job,
+                                      const CXType& type)
 {
     if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
 
         if (auto ptr =
                 _clang_type_to_pointer_type_identifier_recursive_allocating(
-                    data, pointee);
+                    job, pointee);
             ptr) {
             // this is a pointer to a pointer type
             return PointerTypeIdentifier{std::move(ptr)};
         }
 
         if (auto concrete =
-                clang_type_to_concrete_type_identifier(data, pointee);
+                clang_type_to_concrete_type_identifier(job, pointee);
             concrete) {
             return PointerTypeIdentifier{concrete.value()};
+        }
+
+        if (pointee.kind == CXType_FunctionProto) {
+            int num_args = clang_getNumArgTypes(pointee);
+            Vector<std::shared_ptr<TypeIdentifier>> arg_types{
+                job.shared_data->allocator};
+            arg_types.reserve(num_args);
+            for (int i = 0; i < num_args; ++i) {
+                TypeIdentifier iden = clang_type_to_type_identifier(
+                    job, clang_getArgType(pointee, i));
+                arg_types.push_back(make_shared<TypeIdentifier>(
+                    job.shared_data->allocator, std::move(iden)));
+            }
+
+            TypeIdentifier result_iden = clang_type_to_type_identifier(
+                job, clang_getResultType(pointee));
+            arg_types.push_back(make_shared<TypeIdentifier>(
+                job.shared_data->allocator, std::move(result_iden)));
+            return PointerTypeIdentifier{
+                FunctionProtoTypeIdentifier{std::move(arg_types)}};
         }
 
         std::ignore = std::fprintf(
@@ -296,15 +353,14 @@ clang_type_to_pointer_type_identifier(
 }
 
 constexpr std::optional<NonReferenceTypeIdentifier>
-clang_type_to_nonreference_type_identifier(
-    ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
+clang_type_to_nonreference_type_identifier(ClangToGraphMLBuilder::Job& job,
+                                           const CXType& type)
 {
-    if (const auto concrete =
-            clang_type_to_concrete_type_identifier(data, type);
+    if (const auto concrete = clang_type_to_concrete_type_identifier(job, type);
         concrete) {
         return NonReferenceTypeIdentifier{concrete.value()};
     }
-    if (auto pointer = clang_type_to_pointer_type_identifier(data, type);
+    if (auto pointer = clang_type_to_pointer_type_identifier(job, type);
         pointer) {
         return NonReferenceTypeIdentifier{std::move(pointer.value())};
     }
@@ -312,8 +368,8 @@ clang_type_to_nonreference_type_identifier(
 }
 
 constexpr std::optional<ReferenceTypeIdentifier>
-clang_type_to_reference_type_identifier(
-    ClangToGraphMLBuilder::PersistentData& data, const CXType& type)
+clang_type_to_reference_type_identifier(ClangToGraphMLBuilder::Job& job,
+                                        const CXType& type)
 {
     ReferenceKind kind{};
     switch (type.kind) {
@@ -332,7 +388,7 @@ clang_type_to_reference_type_identifier(
     const CXType pointee_type = get_cannonical_type(clang_getPointeeType(type));
 
     if (auto nonref =
-            clang_type_to_nonreference_type_identifier(data, pointee_type);
+            clang_type_to_nonreference_type_identifier(job, pointee_type);
         nonref) {
         return ReferenceTypeIdentifier{
             .is_const = is_const,
@@ -355,14 +411,14 @@ clang_type_to_reference_type_identifier(
 }
 
 constexpr TypeIdentifier
-clang_type_to_type_identifier(ClangToGraphMLBuilder::PersistentData& data,
+clang_type_to_type_identifier(ClangToGraphMLBuilder::Job& job,
                               const CXType& type)
 {
-    if (auto nonref = clang_type_to_nonreference_type_identifier(data, type);
+    if (auto nonref = clang_type_to_nonreference_type_identifier(job, type);
         nonref) {
         return TypeIdentifier{std::move(nonref.value())};
     }
-    if (auto ref = clang_type_to_reference_type_identifier(data, type); ref) {
+    if (auto ref = clang_type_to_reference_type_identifier(job, type); ref) {
         return TypeIdentifier{std::move(ref.value())};
     }
 
