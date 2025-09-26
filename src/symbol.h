@@ -27,9 +27,9 @@ struct Symbol
     Symbol() = delete;
     constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _usr,
                      std::optional<CXCursor> /* cursor */,
-                     String&& _displayName)
+                     String&& _display_name)
         : semantic_parent(_semantic_parent), symbol_kind(_kind),
-          usr(std::move(_usr)), displayName(std::move(_displayName))
+          usr(std::move(_usr)), display_name(std::move(_display_name))
     {
     }
 
@@ -88,7 +88,7 @@ struct Symbol
   public:
     SymbolKind symbol_kind;
     String usr;
-    String displayName;
+    String display_name;
     Symbol* semantic_parent;
     bool visited = false;    // if this is a forward declaration it may not be
     bool serialized = false; // avoid recursion during serialization

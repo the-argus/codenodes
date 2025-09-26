@@ -120,25 +120,25 @@ struct ClangToGraphMLBuilder::Job
         semantic_parent = create_or_find_symbol_with_cursor_runtime_known_type(
             semantic_parent_cursor);
 
-        String displayName{allocator};
-        if (semantic_parent && !semantic_parent->displayName.empty()) {
+        String display_name{allocator};
+        if (semantic_parent && !semantic_parent->display_name.empty()) {
             constexpr std::string_view delimiter = "::";
-            const std::string_view parentDisplayName =
-                semantic_parent->displayName;
-            auto ourName = OwningCXString::clang_getCursorDisplayName(cursor);
-            const size_t ourNameLength = strlen(ourName.c_str());
-            displayName.reserve(ourNameLength + delimiter.size() +
-                                parentDisplayName.size());
-            displayName.append(parentDisplayName);
-            displayName.append(delimiter);
-            displayName.append(ourName.c_str(), ourNameLength);
+            const std::string_view parent_display_name =
+                semantic_parent->display_name;
+            auto our_name = OwningCXString::clang_getCursorDisplayName(cursor);
+            const size_t out_name_length = strlen(our_name.c_str());
+            display_name.reserve(out_name_length + delimiter.size() +
+                                 parent_display_name.size());
+            display_name.append(parent_display_name);
+            display_name.append(delimiter);
+            display_name.append(our_name.c_str(), out_name_length);
         } else {
-            displayName = OwningCXString::clang_getCursorDisplayName(cursor)
-                              .copy_to_string(allocator);
+            display_name = OwningCXString::clang_getCursorDisplayName(cursor)
+                               .copy_to_string(allocator);
         }
 
         T* out = this->allocator.new_object<T>(semantic_parent, std::move(usr),
-                                               cursor, std::move(displayName));
+                                               cursor, std::move(display_name));
 
         if (semantic_parent == nullptr) {
             this->shared_data->global_namespace.symbols.push_back(out);
