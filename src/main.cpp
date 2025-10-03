@@ -56,7 +56,7 @@ int main(int argc, const char* argv[])
     }
 
     if (!output_file_path.has_value()) {
-        std::ignore = fprintf(stderr, "Provide an output file\n");
+        std::ignore = fprintf(stderr, "Provide an output _file\n");
         return EXIT_FAILURE;
     }
 
@@ -88,8 +88,9 @@ int main(int argc, const char* argv[])
         auto view =
             entry.command | std::views::split(' ') |
             std::views::transform([](auto a) { return std::string_view{a}; }) |
-            std::views::filter(&std::string_view::empty) | std::views::common;
-        std::vector<std::string> args_storage(view.begin(), view.end());
+            std::views::filter([](auto sv) { return !sv.empty(); }) |
+            std::views::common;
+        std::vector<std::string> args_storage = {view.begin(), view.end()};
         auto to_ptr = args_storage | std::views::transform(&std::string::c_str);
         std::vector<const char*> args(to_ptr.begin(), to_ptr.end());
         graph_builder.parse(entry.file.c_str(), args);
