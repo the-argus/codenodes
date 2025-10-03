@@ -172,6 +172,7 @@ clang_type_to_primitive_type(const CXType& type)
     case CXType_Long:
     case CXType_LongLong:
         return PrimitiveTypeType::Int64;
+    case CXType_UChar:
     case CXType_Char_U:
         return PrimitiveTypeType::UInt8;
     case CXType_UShort:
@@ -220,6 +221,10 @@ clang_type_to_user_defined_type(ClangToGraphMLBuilder::Job& job,
     return UserDefinedTypeIdentifier{.symbol = user_defined};
 }
 
+constexpr std::optional<PointerTypeIdentifier>
+clang_type_to_pointer_type_identifier(ClangToGraphMLBuilder::Job& job,
+                                      const CXType& type);
+
 constexpr std::optional<CArrayTypeIdentifier>
 clang_type_to_c_array_type_identifier(ClangToGraphMLBuilder::Job& job,
                                       const CXType& type)
@@ -230,24 +235,61 @@ clang_type_to_c_array_type_identifier(ClangToGraphMLBuilder::Job& job,
 
         auto size = static_cast<size_t>(clang_getArraySize(type));
 
-        if (auto primitive = clang_type_to_primitive_type(type); primitive) {
-            return CArrayTypeIdentifier{.contents_type = primitive.value(),
-                                        .size = size};
+        if (auto primitive = clang_type_to_primitive_type(element_type);
+            primitive) {
+            return CArrayTypeIdentifier{
+                .contents_type = primitive.value(),
+                .size = size,
+            };
         }
 
-        if (auto user_defined = clang_type_to_user_defined_type(job, type);
+        if (auto user_defined =
+                clang_type_to_user_defined_type(job, element_type);
             user_defined) {
-            return CArrayTypeIdentifier{.contents_type = user_defined.value(),
-                                        .size = size};
+            return CArrayTypeIdentifier{
+                .contents_type = user_defined.value(),
+                .size = size,
+            };
         }
 
-        std::ignore = fprintf(
-            stderr,
-            "Unknown type { kind: %s } in array, saying that "
-            "it is an array of integers\n",
-            OwningCXString::clang_getTypeKindSpelling(type.kind).c_str());
-        return CArrayTypeIdentifier{.contents_type = PrimitiveTypeType::Int32,
-                                    .size = size};
+        if (auto pointer_type =
+                clang_type_to_pointer_type_identifier(job, element_type);
+            pointer_type) {
+            return CArrayTypeIdentifier{
+                .contents_type = make_shared<PointerTypeIdentifier>(
+                    job.shared_data->allocator,
+                    std::move((pointer_type.value()))),
+                .size = size,
+            };
+        }
+
+        if (type.kind == CXType_ConstantArray ||
+            type.kind == CXType_IncompleteArray ||
+            type.kind == CXType_VariableArray ||
+            type.kind == CXType_DependentSizedArray) {
+            if (auto nested_array = clang_type_to_c_array_type_identifier(
+                    job, clang_getElementType(element_type));
+                nested_array) {
+                return CArrayTypeIdentifier{
+                    .contents_type = make_shared<CArrayTypeIdentifier>(
+                        job.shared_data->allocator,
+                        std::move(nested_array.value())),
+                    .size = size,
+                };
+            }
+        }
+
+        std::ignore =
+            fprintf(stderr,
+                    "Unknown type %s { kind: %s } in array, saying that "
+                    "it is an array of integers\n",
+                    OwningCXString::clang_getTypeSpelling(element_type).c_str(),
+                    OwningCXString::clang_getTypeKindSpelling(element_type.kind)
+                        .c_str());
+        return CArrayTypeIdentifier{
+            .contents_type = PrimitiveTypeType::Int32,
+            .size = size,
+        };
     }
     return {};
 }
@@ -272,11 +314,11 @@ clang_type_to_concrete_type_identifier(ClangToGraphMLBuilder::Job& job,
     return {};
 }
 
-constexpr PointerTypeIdentifier::PointerToPointerTypeIdentifier
+constexpr std::shared_ptr<PointerTypeIdentifier>
 _clang_type_to_pointer_type_identifier_recursive_allocating(
     ClangToGraphMLBuilder::Job& job, const CXType& type)
 {
-    using Out = PointerTypeIdentifier::PointerToPointerTypeIdentifier;
+    using Out = std::shared_ptr<PointerTypeIdentifier>;
     if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
 

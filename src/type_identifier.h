@@ -33,6 +33,7 @@ enum class ReferenceKind : uint8_t
 
 struct Symbol;
 struct TypeIdentifier;
+struct PointerTypeIdentifier;
 
 struct SymbolInfo
 {
@@ -64,23 +65,12 @@ struct FunctionProtoTypeIdentifier
 struct CArrayTypeIdentifier
 {
     std::variant<FunctionProtoTypeIdentifier, UserDefinedTypeIdentifier,
-                 PrimitiveTypeType>
+                 PrimitiveTypeType, std::shared_ptr<CArrayTypeIdentifier>,
+                 std::shared_ptr<PointerTypeIdentifier>>
         contents_type;
     size_t size{};
 
-    [[nodiscard]] SymbolInfo try_get_symbol_info(size_t index) const
-    {
-        return std::visit(
-            [index](const auto& iden) {
-                if constexpr (std::is_same_v<decltype(iden),
-                                             const PrimitiveTypeType&>) {
-                    return SymbolInfo{};
-                } else {
-                    return iden.try_get_symbol_info(index);
-                }
-            },
-            contents_type);
-    }
+    [[nodiscard]] constexpr SymbolInfo try_get_symbol_info(size_t index) const;
 };
 
 struct ConcreteTypeIdentifier
@@ -106,10 +96,8 @@ struct ConcreteTypeIdentifier
 
 struct PointerTypeIdentifier
 {
-    using PointerToPointerTypeIdentifier =
-        std::shared_ptr<PointerTypeIdentifier>;
     // either a pointer to another pointer, or a pointer to a concrete thing
-    std::variant<ConcreteTypeIdentifier, PointerToPointerTypeIdentifier,
+    std::variant<ConcreteTypeIdentifier, std::shared_ptr<PointerTypeIdentifier>,
                  FunctionProtoTypeIdentifier>
         pointee_type;
 
@@ -117,9 +105,9 @@ struct PointerTypeIdentifier
     {
         return std::visit(
             [index](const auto& iden) {
-                if constexpr (std::is_same_v<
-                                  decltype(iden),
-                                  const PointerToPointerTypeIdentifier&>) {
+                if constexpr (std::is_same_v<decltype(iden),
+                                             const std::shared_ptr<
+                                                 PointerTypeIdentifier>&>) {
                     return iden->try_get_symbol_info(index);
                 } else {
                     return iden.try_get_symbol_info(index);
@@ -192,6 +180,27 @@ FunctionProtoTypeIdentifier::try_get_symbol_info(size_t index) const
                               : nullptr,
         .total_symbols = num_symbols,
     };
+}
+
+[[nodiscard]] constexpr SymbolInfo
+CArrayTypeIdentifier::try_get_symbol_info(size_t index) const
+{
+    return std::visit(
+        [index](const auto& iden) {
+            if constexpr (std::is_same_v<decltype(iden),
+                                         const PrimitiveTypeType&>) {
+                return SymbolInfo{};
+            } else if constexpr (
+                std::is_same_v<decltype(iden),
+                               const std::shared_ptr<CArrayTypeIdentifier>&> ||
+                std::is_same_v<decltype(iden),
+                               const std::shared_ptr<PointerTypeIdentifier>&>) {
+                return iden->try_get_symbol_info(index);
+            } else {
+                return iden.try_get_symbol_info(index);
+            }
+        },
+        contents_type);
 }
 } // namespace cn
 
