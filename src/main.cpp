@@ -76,29 +76,41 @@ int main(int argc, const char* argv[])
 
     auto maybe_ccs = cn::parse_compile_commands_json_file(cc_path);
     if (!maybe_ccs) {
+        maybe_ccs =
+            cn::parse_compile_commands_json_file_separated_args(cc_path);
+    }
+    if (!maybe_ccs) {
         return 1;
     }
     auto& ccs = maybe_ccs.value();
 
-    // clang wants null term strings, no sviews, so we have to copy out of the
-    // single `command` string to make them all null terminated
-    std::pmr::synchronized_pool_resource resource = {};
+    std::pmr::synchronized_pool_resource resource{};
+
     cn::ClangToGraphMLBuilder graph_builder(resource);
+
     for (const auto& entry : ccs) {
-        auto view =
-            entry.command | std::views::split(' ') |
-            std::views::transform([](auto a) { return std::string_view{a}; }) |
-            std::views::filter([](auto sv) { return !sv.empty(); }) |
-            std::views::common;
+
+        const auto split_on_spaces = std::views::split(' ');
+
+        const auto to_string_view =
+            std::views::transform([](auto a) { return std::string_view{a}; });
+
+        const auto remove_empty_strings =
+            std::views::filter([](auto sv) { return !sv.empty(); });
+
+        auto view = entry.command | split_on_spaces | to_string_view |
+                    remove_empty_strings | std::views::common;
+
         std::vector<std::string> args_storage = {view.begin(), view.end()};
+
         auto to_ptr = args_storage | std::views::transform(&std::string::c_str);
+
+        // clang wants null term strings, no sviews, so we have to copy out of
+        // the single `command` string to make them all null terminated
         std::vector<const char*> args(to_ptr.begin(), to_ptr.end());
+
         graph_builder.parse(entry.file.c_str(), args);
     }
 
-    if (!graph_builder.finish(output_file)) {
-        return EXIT_FAILURE;
-    }
-
-    return EXIT_SUCCESS;
+    return graph_builder.finish(output_file) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

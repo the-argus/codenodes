@@ -25,11 +25,13 @@ enum class SymbolKind : uint8_t
 struct Symbol
 {
     Symbol() = delete;
-    constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _usr,
+    constexpr Symbol(std::pmr::polymorphic_allocator<> allocator,
+                     Symbol* _semantic_parent, SymbolKind _kind, String&& _usr,
                      std::optional<CXCursor> /* cursor */,
                      String&& _display_name)
         : semantic_parent(_semantic_parent), symbol_kind(_kind),
-          usr(std::move(_usr)), display_name(std::move(_display_name))
+          usr(std::move(_usr)), display_name(std::move(_display_name)),
+          symbols_that_reference_this(allocator)
     {
     }
 
@@ -99,11 +101,13 @@ struct NamespaceSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Namespace;
 
-    constexpr NamespaceSymbol(Symbol* _semantic_parent, String&& _name,
+    constexpr NamespaceSymbol(std::pmr::polymorphic_allocator<> allocator,
+                              Symbol* _semantic_parent, String&& _name,
                               std::optional<CXCursor> cursor,
                               String&& _displayName)
-        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
-                 std::move(_displayName))
+        : Symbol(allocator, _semantic_parent, kind, std::move(_name), cursor,
+                 std::move(_displayName)),
+          symbols(allocator)
     {
     }
 
@@ -134,11 +138,15 @@ struct ClassSymbol : public Symbol
     // semantic_parent, name, cursor is always valid constructor args in
     // template like allocator->new_object(), but we can still handle the
     // case with the root namespace where it has no parent cursor
-    constexpr ClassSymbol(Symbol* _semantic_parent, String&& _name,
+    constexpr ClassSymbol(std::pmr::polymorphic_allocator<> allocator,
+                          Symbol* _semantic_parent, String&& _name,
                           CXCursor cursor, String&& _displayName)
-        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
+        : Symbol(allocator, _semantic_parent, kind, std::move(_name), cursor,
                  std::move(_displayName)),
-          aggregate_kind(get_aggregate_kind_of_cursor(cursor))
+          aggregate_kind(get_aggregate_kind_of_cursor(cursor)),
+          type_refs(allocator), parent_classes(allocator),
+          field_types(allocator), inner_classes(allocator),
+          member_functions(allocator), inner_enums(allocator)
     {
     }
 
@@ -190,10 +198,11 @@ struct EnumTypeSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Enum;
 
-    constexpr EnumTypeSymbol(Symbol* _semantic_parent, String&& _name,
+    constexpr EnumTypeSymbol(std::pmr::polymorphic_allocator<> allocator,
+                             Symbol* _semantic_parent, String&& _name,
                              std::optional<CXCursor> cursor,
                              String&& _displayName)
-        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
+        : Symbol(allocator, _semantic_parent, kind, std::move(_name), cursor,
                  std::move(_displayName))
     {
     }
@@ -220,11 +229,13 @@ struct FunctionSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Function;
 
-    constexpr FunctionSymbol(Symbol* semantic_parent, String&& name,
+    constexpr FunctionSymbol(std::pmr::polymorphic_allocator<> allocator,
+                             Symbol* semantic_parent, String&& name,
                              std::optional<CXCursor> cursor,
                              String&& _displayName)
-        : Symbol(semantic_parent, kind, std::move(name), cursor,
-                 std::move(_displayName))
+        : Symbol(allocator, semantic_parent, kind, std::move(name), cursor,
+                 std::move(_displayName)),
+          parameter_types(allocator)
     {
     }
 

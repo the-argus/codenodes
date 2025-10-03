@@ -17,7 +17,10 @@ using JobResource = std::pmr::unsynchronized_pool_resource;
 template <typename T> struct PMRDeleter
 {
     Allocator* allocator;
-    constexpr void operator()(T* object) { allocator->delete_object(object); }
+    constexpr void operator()(T* object) const
+    {
+        allocator->delete_object(object);
+    }
 };
 
 template <typename T> using OwningPointer = std::unique_ptr<T, PMRDeleter<T>>;
@@ -29,16 +32,6 @@ OwningPointer<T> make_owning(Allocator& allocator, ConstructorArgs&&... args)
     return OwningPointer<T>(
         allocator.new_object<T>(std::forward<ConstructorArgs>(args)...),
         PMRDeleter<T>{std::addressof(allocator)});
-}
-
-template <typename T, typename... ConstructorArgs>
-    requires std::is_constructible_v<T, ConstructorArgs...>
-std::shared_ptr<T> make_shared(Allocator& allocator, ConstructorArgs&&... args)
-{
-    return std::shared_ptr<T>{
-        allocator.new_object<T>(std::forward<ConstructorArgs>(args)...),
-        PMRDeleter<T>{std::addressof(allocator)},
-    };
 }
 
 #endif

@@ -154,16 +154,14 @@ void ClangToGraphMLBuilder::Job::run(
     CXIndex index = clang_createIndex(0, 0);
 
     CXTranslationUnit unit{};
-    CXErrorCode error =
-        clang_parseTranslationUnit2(index, filename, command_args.data(),
-                                    static_cast<int>(command_args.size()),
-                                    nullptr, 0, CXTranslationUnit_None, &unit);
+    CXErrorCode error = clang_parseTranslationUnit2(
+        index, filename, nullptr, 0, nullptr, 0, CXTranslationUnit_None, &unit);
 
     if (error != CXError_Success) {
         std::ignore = fprintf(stderr,
                               "Unable to parse translation unit %s due to "
-                              "error code %d : %x, aborting.\n",
-                              filename, error, error);
+                              "error code %d, aborting.\n",
+                              filename, error);
         clang_disposeTranslationUnit(unit);
         clang_disposeIndex(index);
         return;

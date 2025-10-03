@@ -18,6 +18,10 @@ struct CompileCommandEntry
 std::optional<std::vector<CompileCommandEntry>>
 parse_compile_commands_json_file(const std::string_view& file) noexcept;
 
+std::optional<std::vector<CompileCommandEntry>>
+parse_compile_commands_json_file_separated_args(
+    const std::string_view& file) noexcept;
+
 } // namespace cn
 
 #endif

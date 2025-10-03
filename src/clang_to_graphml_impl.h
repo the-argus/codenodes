@@ -20,16 +20,16 @@ struct ClangToGraphMLBuilder::PersistentData
     PersistentData& operator=(PersistentData&&) = delete;
     ~PersistentData() = default;
 
-    std::vector<OwningPointer<Job>> finished_jobs;
-    // all symbols by their unique id
-    Map<std::string_view, Symbol*> symbols_by_usr;
-    // forest of definitions
-    NamespaceSymbol global_namespace{nullptr, String{}, {}, String{}};
-
     /// For data which lives throughout the whole parse
     std::pmr::polymorphic_allocator<> allocator;
     std::pmr::monotonic_buffer_resource temp_resource;
     std::pmr::polymorphic_allocator<> temp_allocator;
+    Vector<OwningPointer<Job>> finished_jobs{allocator};
+    // all symbols by their unique id
+    Map<std::string_view, Symbol*> symbols_by_usr{allocator};
+    // forest of definitions
+    NamespaceSymbol global_namespace{
+        allocator, nullptr, String{}, {}, String{}};
 };
 
 struct ClangToGraphMLBuilder::Job
@@ -137,8 +137,9 @@ struct ClangToGraphMLBuilder::Job
                                .copy_to_string(allocator);
         }
 
-        T* out = this->allocator.new_object<T>(semantic_parent, std::move(usr),
-                                               cursor, std::move(display_name));
+        T* out = this->allocator.new_object<T>(allocator, semantic_parent,
+                                               std::move(usr), cursor,
+                                               std::move(display_name));
 
         if (semantic_parent == nullptr) {
             this->shared_data->global_namespace.symbols.push_back(out);
@@ -256,7 +257,7 @@ clang_type_to_c_array_type_identifier(ClangToGraphMLBuilder::Job& job,
                 clang_type_to_pointer_type_identifier(job, element_type);
             pointer_type) {
             return CArrayTypeIdentifier{
-                .contents_type = make_shared<PointerTypeIdentifier>(
+                .contents_type = std::allocate_shared<PointerTypeIdentifier>(
                     job.shared_data->allocator,
                     std::move((pointer_type.value()))),
                 .size = size,
@@ -271,7 +272,7 @@ clang_type_to_c_array_type_identifier(ClangToGraphMLBuilder::Job& job,
                     job, clang_getElementType(element_type));
                 nested_array) {
                 return CArrayTypeIdentifier{
-                    .contents_type = make_shared<CArrayTypeIdentifier>(
+                    .contents_type = std::allocate_shared<CArrayTypeIdentifier>(
                         job.shared_data->allocator,
                         std::move(nested_array.value())),
                     .size = size,
@@ -318,13 +319,12 @@ constexpr std::shared_ptr<PointerTypeIdentifier>
 _clang_type_to_pointer_type_identifier_recursive_allocating(
     ClangToGraphMLBuilder::Job& job, const CXType& type)
 {
-    using Out = std::shared_ptr<PointerTypeIdentifier>;
     if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
 
         // allocate the new pointer object in chain
-        Out out =
-            make_owning<PointerTypeIdentifier>(job.shared_data->allocator);
+        auto out = std::allocate_shared<PointerTypeIdentifier>(
+            job.shared_data->allocator);
 
         if (auto ptr =
                 _clang_type_to_pointer_type_identifier_recursive_allocating(
@@ -378,13 +378,13 @@ clang_type_to_pointer_type_identifier(ClangToGraphMLBuilder::Job& job,
             for (int i = 0; i < num_args; ++i) {
                 TypeIdentifier iden = clang_type_to_type_identifier(
                     job, clang_getArgType(pointee, i));
-                arg_types.push_back(make_shared<TypeIdentifier>(
+                arg_types.push_back(std::allocate_shared<TypeIdentifier>(
                     job.shared_data->allocator, std::move(iden)));
             }
 
             TypeIdentifier result_iden = clang_type_to_type_identifier(
                 job, clang_getResultType(pointee));
-            arg_types.push_back(make_shared<TypeIdentifier>(
+            arg_types.push_back(std::allocate_shared<TypeIdentifier>(
                 job.shared_data->allocator, std::move(result_iden)));
             return PointerTypeIdentifier{
                 FunctionProtoTypeIdentifier{std::move(arg_types)}};
