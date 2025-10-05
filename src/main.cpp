@@ -84,9 +84,11 @@ int main(int argc, const char* argv[])
     }
     auto& ccs = maybe_ccs.value();
 
-    std::pmr::synchronized_pool_resource resource{};
+    // all memory is leaked, we do not free anything throughout the whole
+    // program, though we can free it all at the end of this function
+    std::pmr::monotonic_buffer_resource memory_resource{};
 
-    cn::ClangToGraphMLBuilder graph_builder(resource);
+    cn::ClangToGraphMLBuilder graph_builder(memory_resource);
 
     for (const auto& entry : ccs) {
 

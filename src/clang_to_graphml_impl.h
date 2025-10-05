@@ -24,7 +24,7 @@ struct ClangToGraphMLBuilder::PersistentData
     std::pmr::polymorphic_allocator<> allocator;
     std::pmr::monotonic_buffer_resource temp_resource;
     std::pmr::polymorphic_allocator<> temp_allocator;
-    Vector<OwningPointer<Job>> finished_jobs{allocator};
+    OrderedCollection<Job*> finished_jobs{allocator};
     // all symbols by their unique id
     Map<std::string_view, Symbol*> symbols_by_usr{allocator};
     // forest of definitions
@@ -34,10 +34,7 @@ struct ClangToGraphMLBuilder::PersistentData
 
 struct ClangToGraphMLBuilder::Job
 {
-    explicit Job(MemoryResource* res, PersistentData* data)
-        : shared_data(data), resource(res), allocator(&resource)
-    {
-    }
+    explicit Job(PersistentData* data) : shared_data(data) {}
 
     void run(const char* filename,
              std::span<const char* const> command_args) noexcept;
@@ -96,7 +93,7 @@ struct ClangToGraphMLBuilder::Job
     T& create_or_find_symbol_with_cursor(CXCursor cursor)
     {
         auto usr = OwningCXString::clang_getCursorUSR(cursor).copy_to_string(
-            allocator);
+            shared_data->allocator);
 
         if (shared_data->symbols_by_usr.contains(usr)) {
             Symbol* out = shared_data->symbols_by_usr[std::move(usr)];
@@ -120,7 +117,7 @@ struct ClangToGraphMLBuilder::Job
         semantic_parent = create_or_find_symbol_with_cursor_runtime_known_type(
             semantic_parent_cursor);
 
-        String display_name{allocator};
+        String display_name{shared_data->allocator};
         if (semantic_parent && !semantic_parent->display_name.empty()) {
             constexpr std::string_view delimiter = "::";
             const std::string_view parent_display_name =
@@ -134,15 +131,15 @@ struct ClangToGraphMLBuilder::Job
             display_name.append(our_name.c_str(), out_name_length);
         } else {
             display_name = OwningCXString::clang_getCursorDisplayName(cursor)
-                               .copy_to_string(allocator);
+                               .copy_to_string(shared_data->allocator);
         }
 
-        T* out = this->allocator.new_object<T>(allocator, semantic_parent,
-                                               std::move(usr), cursor,
-                                               std::move(display_name));
+        T* out = shared_data->allocator.new_object<T>(
+            shared_data->allocator, semantic_parent, std::move(usr), cursor,
+            std::move(display_name));
 
         if (semantic_parent == nullptr) {
-            this->shared_data->global_namespace.symbols.push_back(out);
+            shared_data->global_namespace.symbols.emplace_back(out);
         }
 
         // NOTE: insert beforehand so that way children can find us when looking
@@ -155,8 +152,6 @@ struct ClangToGraphMLBuilder::Job
     }
 
     PersistentData* shared_data;
-    Allocator allocator;
-    JobResource resource;
 };
 
 constexpr std::optional<PrimitiveTypeType>
@@ -257,9 +252,9 @@ clang_type_to_c_array_type_identifier(ClangToGraphMLBuilder::Job& job,
                 clang_type_to_pointer_type_identifier(job, element_type);
             pointer_type) {
             return CArrayTypeIdentifier{
-                .contents_type = std::allocate_shared<PointerTypeIdentifier>(
-                    job.shared_data->allocator,
-                    std::move((pointer_type.value()))),
+                .contents_type = job.shared_data->allocator
+                                     .new_object<PointerTypeIdentifier>(
+                                         std::move(pointer_type.value())),
                 .size = size,
             };
         }
@@ -272,9 +267,9 @@ clang_type_to_c_array_type_identifier(ClangToGraphMLBuilder::Job& job,
                     job, clang_getElementType(element_type));
                 nested_array) {
                 return CArrayTypeIdentifier{
-                    .contents_type = std::allocate_shared<CArrayTypeIdentifier>(
-                        job.shared_data->allocator,
-                        std::move(nested_array.value())),
+                    .contents_type = job.shared_data->allocator
+                                         .new_object<CArrayTypeIdentifier>(
+                                             std::move(nested_array.value())),
                     .size = size,
                 };
             }
@@ -299,13 +294,13 @@ constexpr std::optional<ConcreteTypeIdentifier>
 clang_type_to_concrete_type_identifier(ClangToGraphMLBuilder::Job& job,
                                        const CXType& type)
 {
-    if (const auto primitive = clang_type_to_primitive_type(type); primitive) {
+    if (auto primitive = clang_type_to_primitive_type(type); primitive) {
         return ConcreteTypeIdentifier{primitive.value()};
     }
 
-    if (const auto carray = clang_type_to_c_array_type_identifier(job, type);
+    if (auto carray = clang_type_to_c_array_type_identifier(job, type);
         carray) {
-        return ConcreteTypeIdentifier{carray.value()};
+        return ConcreteTypeIdentifier{std::move(carray.value())};
     }
 
     if (auto user_defined = clang_type_to_user_defined_type(job, type);
@@ -315,7 +310,7 @@ clang_type_to_concrete_type_identifier(ClangToGraphMLBuilder::Job& job,
     return {};
 }
 
-constexpr std::shared_ptr<PointerTypeIdentifier>
+constexpr PointerTypeIdentifier*
 _clang_type_to_pointer_type_identifier_recursive_allocating(
     ClangToGraphMLBuilder::Job& job, const CXType& type)
 {
@@ -323,15 +318,15 @@ _clang_type_to_pointer_type_identifier_recursive_allocating(
         pointee.kind != CXType_Invalid) {
 
         // allocate the new pointer object in chain
-        auto out = std::allocate_shared<PointerTypeIdentifier>(
-            job.shared_data->allocator);
+        auto* out =
+            job.shared_data->allocator.new_object<PointerTypeIdentifier>(
+                nullptr);
 
-        if (auto ptr =
+        if (auto* ptr =
                 _clang_type_to_pointer_type_identifier_recursive_allocating(
                     job, pointee);
             ptr) {
-            // this is also a pointer to a pointer type
-            out->pointee_type = std::move(ptr);
+            out->pointee_type = ptr;
             return out;
         }
 
@@ -356,36 +351,31 @@ clang_type_to_pointer_type_identifier(ClangToGraphMLBuilder::Job& job,
     if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
 
-        if (auto ptr =
+        if (auto* ptr =
                 _clang_type_to_pointer_type_identifier_recursive_allocating(
                     job, pointee);
             ptr) {
-            // this is a pointer to a pointer type
-            return PointerTypeIdentifier{std::move(ptr)};
+            return PointerTypeIdentifier{ptr};
         }
 
         if (auto concrete =
                 clang_type_to_concrete_type_identifier(job, pointee);
             concrete) {
-            return PointerTypeIdentifier{concrete.value()};
+            return PointerTypeIdentifier{std::move(concrete.value())};
         }
 
         if (pointee.kind == CXType_FunctionProto) {
             int num_args = clang_getNumArgTypes(pointee);
-            Vector<std::shared_ptr<TypeIdentifier>> arg_types{
+            OrderedCollection<TypeIdentifier> arg_types{
                 job.shared_data->allocator};
             arg_types.reserve(num_args);
             for (int i = 0; i < num_args; ++i) {
-                TypeIdentifier iden = clang_type_to_type_identifier(
-                    job, clang_getArgType(pointee, i));
-                arg_types.push_back(std::allocate_shared<TypeIdentifier>(
-                    job.shared_data->allocator, std::move(iden)));
+                arg_types.emplace_back(clang_type_to_type_identifier(
+                    job, clang_getArgType(pointee, i)));
             }
 
-            TypeIdentifier result_iden = clang_type_to_type_identifier(
-                job, clang_getResultType(pointee));
-            arg_types.push_back(std::allocate_shared<TypeIdentifier>(
-                job.shared_data->allocator, std::move(result_iden)));
+            arg_types.emplace_back(clang_type_to_type_identifier(
+                job, clang_getResultType(pointee)));
             return PointerTypeIdentifier{
                 FunctionProtoTypeIdentifier{std::move(arg_types)}};
         }
@@ -401,9 +391,9 @@ constexpr std::optional<NonReferenceTypeIdentifier>
 clang_type_to_nonreference_type_identifier(ClangToGraphMLBuilder::Job& job,
                                            const CXType& type)
 {
-    if (const auto concrete = clang_type_to_concrete_type_identifier(job, type);
+    if (auto concrete = clang_type_to_concrete_type_identifier(job, type);
         concrete) {
-        return NonReferenceTypeIdentifier{concrete.value()};
+        return NonReferenceTypeIdentifier{std::move(concrete.value())};
     }
     if (auto pointer = clang_type_to_pointer_type_identifier(job, type);
         pointer) {

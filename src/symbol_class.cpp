@@ -8,20 +8,26 @@ struct Args
     Symbol* semantic_parent;
 
     // output
-    Vector<TypeIdentifier>& type_refs;
-    Vector<TypeIdentifier>& field_types;
-    Vector<TypeIdentifier>& parent_classes;
-    Vector<ClassSymbol::ClassReference>& inner_classes;
-    Vector<ClassSymbol::FunctionReference>& member_functions;
-    Vector<ClassSymbol::EnumReference>& inner_enums;
+    OrderedCollection<TypeIdentifier>& type_refs;
+    OrderedCollection<TypeIdentifier>& field_types;
+    OrderedCollection<TypeIdentifier>& parent_classes;
+    OrderedCollection<ClassSymbol*>& inner_classes;
+    OrderedCollection<FunctionSymbol*>& member_functions;
+    OrderedCollection<EnumTypeSymbol*>& inner_enums;
 };
 
 size_t ClassSymbol::get_num_symbols_this_references() const { return 0; }
 
-Symbol* ClassSymbol::get_symbol_this_references(size_t /*index*/) const
+const Symbol* ClassSymbol::get_symbol_this_references(size_t /*index*/) const
 {
     return nullptr;
 }
+
+Symbol* ClassSymbol::get_symbol_this_references(size_t /*index*/)
+{
+    return nullptr;
+}
+
 namespace {
 enum CXChildVisitResult visitor(CXCursor cursor, CXCursor /* parent */,
                                 void* userdata)
@@ -31,7 +37,7 @@ enum CXChildVisitResult visitor(CXCursor cursor, CXCursor /* parent */,
     switch (cursor.kind) {
     case CXCursor_CXXBaseSpecifier: {
         CXType type = get_cannonical_type(cursor);
-        args->parent_classes.push_back(
+        args->parent_classes.emplace_back(
             clang_type_to_type_identifier(args->job, type));
         return CXChildVisit_Continue;
     }
@@ -57,7 +63,7 @@ enum CXChildVisitResult visitor(CXCursor cursor, CXCursor /* parent */,
     case CXCursor_VarDecl:
     case CXCursor_TypeRef: {
         CXType type = get_cannonical_type(cursor);
-        args->type_refs.push_back(
+        args->type_refs.emplace_back(
             clang_type_to_type_identifier(args->job, type));
         return CXChildVisit_Continue;
     }
@@ -95,7 +101,7 @@ enum CXVisitorResult field_visitor(CXCursor cursor, CXClientData client_data)
 {
     auto* args = static_cast<Args*>(client_data);
 
-    args->field_types.push_back(
+    args->field_types.emplace_back(
         clang_type_to_type_identifier(args->job, get_cannonical_type(cursor)));
 
     return CXVisit_Continue;

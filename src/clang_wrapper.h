@@ -76,7 +76,8 @@ struct OwningCXString : private CXString
             ::clang_formatDiagnostic(diagnostic, display_options));
     }
 
-    constexpr String copy_to_string(Allocator& allocator)
+    constexpr String
+    copy_to_string(std::pmr::polymorphic_allocator<>& allocator)
     {
         return {c_str(), allocator};
     }

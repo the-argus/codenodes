@@ -57,7 +57,7 @@ struct UserDefinedTypeIdentifier
 
 struct FunctionProtoTypeIdentifier
 {
-    Vector<std::shared_ptr<TypeIdentifier>> types;
+    OrderedCollection<TypeIdentifier> types;
 
     [[nodiscard]] constexpr SymbolInfo try_get_symbol_info(size_t index) const;
 };
@@ -65,8 +65,8 @@ struct FunctionProtoTypeIdentifier
 struct CArrayTypeIdentifier
 {
     std::variant<FunctionProtoTypeIdentifier, UserDefinedTypeIdentifier,
-                 PrimitiveTypeType, std::shared_ptr<CArrayTypeIdentifier>,
-                 std::shared_ptr<PointerTypeIdentifier>>
+                 PrimitiveTypeType, CArrayTypeIdentifier*,
+                 PointerTypeIdentifier*>
         contents_type;
     size_t size{};
 
@@ -97,7 +97,7 @@ struct ConcreteTypeIdentifier
 struct PointerTypeIdentifier
 {
     // either a pointer to another pointer, or a pointer to a concrete thing
-    std::variant<ConcreteTypeIdentifier, std::shared_ptr<PointerTypeIdentifier>,
+    std::variant<ConcreteTypeIdentifier, PointerTypeIdentifier*,
                  FunctionProtoTypeIdentifier>
         pointee_type;
 
@@ -105,9 +105,8 @@ struct PointerTypeIdentifier
     {
         return std::visit(
             [index](const auto& iden) {
-                if constexpr (std::is_same_v<decltype(iden),
-                                             const std::shared_ptr<
-                                                 PointerTypeIdentifier>&>) {
+                using T = std::remove_cvref_t<decltype(iden)>;
+                if constexpr (std::is_pointer_v<T>) {
                     return iden->try_get_symbol_info(index);
                 } else {
                     return iden.try_get_symbol_info(index);
@@ -171,12 +170,12 @@ struct TypeIdentifier
 FunctionProtoTypeIdentifier::try_get_symbol_info(size_t index) const
 {
     size_t num_symbols = 0;
-    for (const auto& iden : types) {
-        num_symbols += iden->get_num_symbols();
+    for (size_t i = 0; i < types.size(); ++i) {
+        num_symbols += types.at(i).get_num_symbols();
     }
     return {
         .symbol_queried = index < types.size()
-                              ? types.at(index)->try_get_symbol(index)
+                              ? types.at(index).try_get_symbol(index)
                               : nullptr,
         .total_symbols = num_symbols,
     };
@@ -190,11 +189,8 @@ CArrayTypeIdentifier::try_get_symbol_info(size_t index) const
             if constexpr (std::is_same_v<decltype(iden),
                                          const PrimitiveTypeType&>) {
                 return SymbolInfo{};
-            } else if constexpr (
-                std::is_same_v<decltype(iden),
-                               const std::shared_ptr<CArrayTypeIdentifier>&> ||
-                std::is_same_v<decltype(iden),
-                               const std::shared_ptr<PointerTypeIdentifier>&>) {
+            } else if constexpr (std::is_pointer_v<
+                                     std::remove_cvref_t<decltype(iden)>>) {
                 return iden->try_get_symbol_info(index);
             } else {
                 return iden.try_get_symbol_info(index);

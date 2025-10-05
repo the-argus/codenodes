@@ -6,8 +6,9 @@
 
 namespace cn {
 
-ClangToGraphMLBuilder::ClangToGraphMLBuilder(MemoryResource& memory_resource)
-    : m_resource(memory_resource), m_allocator(&memory_resource),
+ClangToGraphMLBuilder::ClangToGraphMLBuilder(
+    std::pmr::memory_resource& memory_resource)
+    : m_allocator(&memory_resource),
       m_data(m_allocator.new_object<PersistentData>(&memory_resource))
 {
 }
@@ -20,9 +21,9 @@ ClangToGraphMLBuilder::~ClangToGraphMLBuilder()
 void ClangToGraphMLBuilder::parse(
     const char* filename, std::span<const char* const> command_args) noexcept
 {
-    OwningPointer job = make_owning<Job>(m_allocator, &m_resource, m_data);
+    Job* job = m_allocator.new_object<Job>(m_data);
     job->run(filename, command_args);
-    m_data->finished_jobs.emplace_back(std::move(job));
+    m_data->finished_jobs.emplace_back(job);
 }
 
 enum CXChildVisitResult ClangToGraphMLBuilder::Job::top_level_cursor_visitor(
@@ -155,7 +156,8 @@ void ClangToGraphMLBuilder::Job::run(
 
     CXTranslationUnit unit{};
     CXErrorCode error = clang_parseTranslationUnit2(
-        index, filename, nullptr, 0, nullptr, 0, CXTranslationUnit_None, &unit);
+        index, filename, /* command_args.data(), */ nullptr, 0, nullptr, 0,
+        CXTranslationUnit_None, &unit);
 
     if (error != CXError_Success) {
         std::ignore = fprintf(stderr,

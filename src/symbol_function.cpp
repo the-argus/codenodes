@@ -4,19 +4,29 @@
 namespace cn {
 size_t FunctionSymbol::get_num_symbols_this_references() const
 {
-    return std::ranges::fold_left(
-               this->parameter_types, 0UL,
-               [](size_t left, const TypeIdentifier& right) -> size_t {
-                   return left + right.get_num_symbols();
-               }) +
-           this->return_type.get_num_symbols();
+    size_t num = 0;
+    for (size_t i = 0; i < this->parameter_types.size(); ++i) {
+        num += this->parameter_types.at(i).get_num_symbols();
+    }
+    num += this->return_type.get_num_symbols();
+    return num;
 }
 
-Symbol* FunctionSymbol::get_symbol_this_references(size_t index) const
+Symbol* FunctionSymbol::get_symbol_this_references(size_t index)
+{
+    // using const cast to avoid repeating relatively complicated getter
+    // function
+    return const_cast<Symbol*>(
+        const_cast<const FunctionSymbol*>(this)->get_symbol_this_references(
+            index));
+}
+
+const Symbol* FunctionSymbol::get_symbol_this_references(size_t index) const
 {
     size_t iter = 0;
 
-    for (const TypeIdentifier& iden : this->parameter_types) {
+    for (size_t i = 0; i < this->parameter_types.size(); ++i) {
+        const auto& iden = this->parameter_types.at(i);
         const size_t num_symbols = iden.get_num_symbols();
         if (iter + num_symbols <= index) {
             iter += num_symbols;
@@ -71,7 +81,7 @@ bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
 
     for (unsigned i = 0; i < num_args; ++i) {
         CXType arg_type = get_cannonical_type(clang_getArgType(type, i));
-        this->parameter_types.push_back(
+        this->parameter_types.emplace_back(
             clang_type_to_type_identifier(job, arg_type));
     }
 

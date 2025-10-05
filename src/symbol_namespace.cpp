@@ -6,7 +6,7 @@ struct Args
     ClangToGraphMLBuilder::Job& job;
     const CXCursor& cursor;
     Symbol* semantic_parent;
-    Vector<Symbol*>& symbols; // output of visitor
+    OrderedCollection<Symbol*>& symbols; // output of visitor
 };
 
 namespace {
@@ -28,7 +28,7 @@ enum CXChildVisitResult visitor(CXCursor input_cursor, CXCursor /* parent */,
     case CXCursorKind::CXCursor_FunctionDecl: {
         auto& function =
             args->job.create_or_find_symbol_with_cursor<FunctionSymbol>(cursor);
-        args->symbols.push_back(&function);
+        args->symbols.emplace_back(std::addressof(function));
         break;
     }
     case CXCursor_UnionDecl:
@@ -36,20 +36,20 @@ enum CXChildVisitResult visitor(CXCursor input_cursor, CXCursor /* parent */,
     case CXCursor_StructDecl: {
         auto& class_symbol =
             args->job.create_or_find_symbol_with_cursor<ClassSymbol>(cursor);
-        args->symbols.push_back(&class_symbol);
+        args->symbols.emplace_back(std::addressof(class_symbol));
         break;
     }
     case CXCursor_EnumDecl: {
         auto& enum_symbol =
             args->job.create_or_find_symbol_with_cursor<EnumTypeSymbol>(cursor);
-        args->symbols.push_back(&enum_symbol);
+        args->symbols.emplace_back(std::addressof(enum_symbol));
         break;
     }
     case CXCursor_Namespace: {
         auto& namespace_symbol =
             args->job.create_or_find_symbol_with_cursor<NamespaceSymbol>(
                 cursor);
-        args->symbols.push_back(&namespace_symbol);
+        args->symbols.emplace_back(std::addressof(namespace_symbol));
         break;
     }
     case CXCursor_ClassTemplate:

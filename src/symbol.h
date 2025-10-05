@@ -25,25 +25,24 @@ enum class SymbolKind : uint8_t
 struct Symbol
 {
     Symbol() = delete;
-    constexpr Symbol(std::pmr::polymorphic_allocator<> allocator,
-                     Symbol* _semantic_parent, SymbolKind _kind, String&& _usr,
+    constexpr Symbol(Symbol* _semantic_parent, SymbolKind _kind, String&& _usr,
                      std::optional<CXCursor> /* cursor */,
                      String&& _display_name)
         : semantic_parent(_semantic_parent), symbol_kind(_kind),
-          usr(std::move(_usr)), display_name(std::move(_display_name)),
-          symbols_that_reference_this(allocator)
+          usr(std::move(_usr)), display_name(std::move(_display_name))
     {
     }
 
     Symbol(const Symbol&) = delete;
     Symbol& operator=(const Symbol&) = delete;
-    Symbol(Symbol&&) = default;
-    Symbol& operator=(Symbol&&) = default;
+    Symbol(Symbol&&) noexcept = default;
+    Symbol& operator=(Symbol&&) noexcept = default;
     virtual ~Symbol() = default;
 
     [[nodiscard]] virtual size_t get_num_symbols_this_references() const = 0;
-    [[nodiscard]] virtual Symbol*
+    [[nodiscard]] virtual const Symbol*
     get_symbol_this_references(size_t index) const = 0;
+    [[nodiscard]] virtual Symbol* get_symbol_this_references(size_t index) = 0;
 
     constexpr void try_visit_children(ClangToGraphMLBuilder::Job& job,
                                       const CXCursor& cursor)
@@ -94,7 +93,6 @@ struct Symbol
     Symbol* semantic_parent;
     bool visited = false;    // if this is a forward declaration it may not be
     bool serialized = false; // avoid recursion during serialization
-    Vector<Symbol*> symbols_that_reference_this;
 };
 
 struct NamespaceSymbol : public Symbol
@@ -105,7 +103,7 @@ struct NamespaceSymbol : public Symbol
                               Symbol* _semantic_parent, String&& _name,
                               std::optional<CXCursor> cursor,
                               String&& _displayName)
-        : Symbol(allocator, _semantic_parent, kind, std::move(_name), cursor,
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
                  std::move(_displayName)),
           symbols(allocator)
     {
@@ -116,8 +114,20 @@ struct NamespaceSymbol : public Symbol
         return symbols.size();
     }
 
-    [[nodiscard]] Symbol* get_symbol_this_references(size_t index) const final
+    [[nodiscard]] const Symbol*
+    get_symbol_this_references(size_t index) const final
     {
+        if (index >= symbols.size()) {
+            return nullptr;
+        }
+        return symbols.at(index);
+    }
+
+    [[nodiscard]] Symbol* get_symbol_this_references(size_t index) final
+    {
+        if (index >= symbols.size()) {
+            return nullptr;
+        }
         return symbols.at(index);
     }
 
@@ -127,7 +137,7 @@ struct NamespaceSymbol : public Symbol
                                            const CXCursor& cursor) final;
 
   public:
-    Vector<Symbol*> symbols;
+    OrderedCollection<Symbol*> symbols;
 };
 
 struct ClassSymbol : public Symbol
@@ -141,7 +151,7 @@ struct ClassSymbol : public Symbol
     constexpr ClassSymbol(std::pmr::polymorphic_allocator<> allocator,
                           Symbol* _semantic_parent, String&& _name,
                           CXCursor cursor, String&& _displayName)
-        : Symbol(allocator, _semantic_parent, kind, std::move(_name), cursor,
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
                  std::move(_displayName)),
           aggregate_kind(get_aggregate_kind_of_cursor(cursor)),
           type_refs(allocator), parent_classes(allocator),
@@ -157,22 +167,6 @@ struct ClassSymbol : public Symbol
         Union,
     };
 
-    struct FunctionReference
-    {
-        FunctionSymbol* symbol;
-        bool is_static;
-    };
-
-    struct ClassReference
-    {
-        ClassSymbol* symbol;
-    };
-
-    struct EnumReference
-    {
-        EnumTypeSymbol* symbol;
-    };
-
   protected:
     // cursor must be of type CXCursor_ClassDecl or CXCursor_UnionDecl or
     // CXCursor_StructDecl
@@ -183,26 +177,30 @@ struct ClassSymbol : public Symbol
 
   public:
     [[nodiscard]] size_t get_num_symbols_this_references() const final;
-    [[nodiscard]] Symbol* get_symbol_this_references(size_t index) const final;
+    [[nodiscard]] Symbol* get_symbol_this_references(size_t index) final;
+    [[nodiscard]] const Symbol*
+    get_symbol_this_references(size_t index) const final;
 
     AggregateKind aggregate_kind;
-    Vector<TypeIdentifier> type_refs;
-    Vector<TypeIdentifier> parent_classes;
-    Vector<TypeIdentifier> field_types;
-    Vector<ClassReference> inner_classes;
-    Vector<FunctionReference> member_functions;
-    Vector<EnumReference> inner_enums;
+    OrderedCollection<TypeIdentifier> type_refs;
+    OrderedCollection<TypeIdentifier> parent_classes;
+    OrderedCollection<TypeIdentifier> field_types;
+    OrderedCollection<ClassSymbol*> inner_classes;
+    OrderedCollection<FunctionSymbol*> member_functions;
+    OrderedCollection<EnumTypeSymbol*> inner_enums;
 };
 
 struct EnumTypeSymbol : public Symbol
 {
     constexpr static auto kind = SymbolKind::Enum;
 
-    constexpr EnumTypeSymbol(std::pmr::polymorphic_allocator<> allocator,
+    // allocator accepted as first arg so that all symbols have compatible
+    // constructor args
+    constexpr EnumTypeSymbol(std::pmr::polymorphic_allocator<> /* dummy*/,
                              Symbol* _semantic_parent, String&& _name,
                              std::optional<CXCursor> cursor,
                              String&& _displayName)
-        : Symbol(allocator, _semantic_parent, kind, std::move(_name), cursor,
+        : Symbol(_semantic_parent, kind, std::move(_name), cursor,
                  std::move(_displayName))
     {
     }
@@ -216,6 +214,11 @@ struct EnumTypeSymbol : public Symbol
     [[nodiscard]] size_t get_num_symbols_this_references() const final
     {
         return 0;
+    }
+
+    [[nodiscard]] Symbol* get_symbol_this_references(size_t /*index*/) final
+    {
+        return nullptr;
     }
 
     [[nodiscard]] Symbol*
@@ -233,14 +236,16 @@ struct FunctionSymbol : public Symbol
                              Symbol* semantic_parent, String&& name,
                              std::optional<CXCursor> cursor,
                              String&& _displayName)
-        : Symbol(allocator, semantic_parent, kind, std::move(name), cursor,
+        : Symbol(semantic_parent, kind, std::move(name), cursor,
                  std::move(_displayName)),
           parameter_types(allocator)
     {
     }
 
     [[nodiscard]] size_t get_num_symbols_this_references() const final;
-    [[nodiscard]] Symbol* get_symbol_this_references(size_t index) const final;
+    [[nodiscard]] Symbol* get_symbol_this_references(size_t index) final;
+    [[nodiscard]] const Symbol*
+    get_symbol_this_references(size_t index) const final;
 
   protected:
     // cursor must be of type CXCursor_FunctionDecl
@@ -252,7 +257,7 @@ struct FunctionSymbol : public Symbol
     // if true, then parameter_types will not include the type of `this`, you
     // get that from .semantic_parent
     bool is_method = false;
-    Vector<TypeIdentifier> parameter_types;
+    OrderedCollection<TypeIdentifier> parameter_types;
 };
 
 } // namespace cn

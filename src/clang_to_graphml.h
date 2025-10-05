@@ -29,7 +29,6 @@ class ClangToGraphMLBuilder
     struct PersistentData;
 
   private:
-    std::pmr::memory_resource& m_resource; // backs the other allocators
     std::pmr::polymorphic_allocator<> m_allocator;
     // data that persists between calls to parse
     PersistentData* m_data;
