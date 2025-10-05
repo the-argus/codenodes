@@ -26,7 +26,7 @@ struct ClangToGraphMLBuilder::PersistentData
     std::pmr::polymorphic_allocator<> temp_allocator;
     OrderedCollection<Job*> finished_jobs{allocator};
     // all symbols by their unique id
-    Map<std::string_view, Symbol*> symbols_by_usr{allocator};
+    Map<String, Symbol*> symbols_by_usr{allocator};
     // forest of definitions
     NamespaceSymbol global_namespace{
         allocator, nullptr, String{}, {}, String{}};
@@ -144,7 +144,7 @@ struct ClangToGraphMLBuilder::Job
 
         // NOTE: insert beforehand so that way children can find us when looking
         // for their semantic parent
-        shared_data->symbols_by_usr[std::string_view(out->usr)] = out;
+        shared_data->symbols_by_usr[out->usr] = out;
 
         out->try_visit_children(*this, cursor);
 
