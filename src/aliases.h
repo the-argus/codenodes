@@ -7,7 +7,9 @@
 #include <list>
 #include <map>
 #include <memory_resource>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 // NOTE: this type does not guarantee that its elements can have stable pointers
@@ -15,7 +17,7 @@
 // feature though as there's already indirection for polymorphism with the
 // Symbol class, and anything thats by-value is just copied rather than having
 // its address taken
-template <typename T> class OrderedCollection
+template <typename T> class OrderedCollectionImpl
 {
   private:
     std::pmr::deque<T> elements;
@@ -27,27 +29,28 @@ template <typename T> class OrderedCollection
     decltype(elements)::const_iterator last_emplaced;
 
   public:
-    OrderedCollection() = delete;
+    OrderedCollectionImpl() = delete;
 
-    OrderedCollection(const OrderedCollection& other) = delete;
-    OrderedCollection& operator=(const OrderedCollection& other) = delete;
+    OrderedCollectionImpl(const OrderedCollectionImpl& other) = delete;
+    OrderedCollectionImpl&
+    operator=(const OrderedCollectionImpl& other) = delete;
 
-    OrderedCollection(OrderedCollection&& other) = default;
-    OrderedCollection& operator=(OrderedCollection&& other) = default;
+    OrderedCollectionImpl(OrderedCollectionImpl&& other) = default;
+    OrderedCollectionImpl& operator=(OrderedCollectionImpl&& other) = default;
 
-    ~OrderedCollection() = default;
+    ~OrderedCollectionImpl() = default;
 
-    constexpr explicit OrderedCollection(
+    constexpr explicit OrderedCollectionImpl(
         std::pmr::polymorphic_allocator<> allocator)
         : elements(allocator)
     {
     }
 
     // using iterator = decltype(elements)::iterator;
-    using const_iterator = decltype(elements)::const_iterator;
+    // using const_iterator = decltype(elements)::const_iterator;
 
-    const_iterator cbegin() const { return elements.cbegin(); }
-    const_iterator cend() const { return elements.cend(); }
+    // const_iterator cbegin() const { return elements.cbegin(); }
+    // const_iterator cend() const { return elements.cend(); }
     // iterator begin() const { return elements.begin(); }
     // iterator end() const { return elements.end(); }
 
@@ -147,6 +150,67 @@ template <typename T> class OrderedCollection
         ++m_size;
     }
 };
+
+template <typename T> class OrderedCollectionCustom
+{
+  private:
+    std::pmr::polymorphic_allocator<> allocator;
+    std::span<std::span<T>> buffer;
+
+  public:
+    OrderedCollectionCustom() = delete;
+    constexpr explicit OrderedCollectionCustom(
+        std::pmr::polymorphic_allocator<> _allocator)
+        : allocator(_allocator)
+    {
+    }
+
+    OrderedCollectionCustom(const OrderedCollectionCustom& other) = delete;
+    OrderedCollectionCustom&
+    operator=(const OrderedCollectionCustom& other) = delete;
+
+    constexpr OrderedCollectionCustom(OrderedCollectionCustom&& other) noexcept
+        : buffer(std::exchange(other.buffer, {})), allocator(other.allocator)
+    {
+    }
+
+    constexpr OrderedCollectionCustom&
+    operator=(OrderedCollectionCustom&& other) noexcept
+    {
+        assert(allocator == other.allocator);
+        std::swap(other.buffer, buffer);
+    }
+
+    constexpr ~OrderedCollectionCustom()
+    {
+        if (!buffer.empty()) {
+            for (auto sub_buffer : buffer) {
+                if constexpr (!std::is_trivially_destructible_v<T>) {
+                    for (auto item : sub_buffer) {
+                        item.~T();
+                    }
+                }
+                allocator.deallocate_bytes(sub_buffer.data(),
+                                           sub_buffer.size());
+            }
+            // not destroying the actual spans
+            static_assert(std::is_trivially_destructible_v<
+                          std::remove_cvref_t<decltype(buffer.at(0))>>);
+            allocator.deallocate_bytes(buffer.data(), buffer.size());
+        }
+    }
+
+    // TODO: implement these
+    template <typename... Args>
+        requires std::is_constructible_v<T, Args...>
+    constexpr void emplace_back(Args&&... args);
+    constexpr void reserve(size_t num_elements);
+    [[nodiscard]] constexpr const T& at(size_t index) const;
+    [[nodiscard]] constexpr size_t size() const;
+    [[nodiscard]] constexpr const T& back() const&;
+};
+
+template <typename T> using OrderedCollection = OrderedCollectionImpl<T>;
 
 using String = std::pmr::string;
 
