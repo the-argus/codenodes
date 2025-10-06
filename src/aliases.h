@@ -2,6 +2,8 @@
 #define __ALIASES_H__
 
 #include <cassert>
+#include <cmath>
+#include <cstring>
 #include <deque>
 #include <forward_list>
 #include <list>
@@ -36,7 +38,7 @@ template <typename T> class OrderedCollectionImpl
     operator=(const OrderedCollectionImpl& other) = delete;
 
     OrderedCollectionImpl(OrderedCollectionImpl&& other) = default;
-    OrderedCollectionImpl& operator=(OrderedCollectionImpl&& other) = default;
+    OrderedCollectionImpl& operator=(OrderedCollectionImpl&& other) = delete;
 
     ~OrderedCollectionImpl() = default;
 
@@ -45,19 +47,6 @@ template <typename T> class OrderedCollectionImpl
         : elements(allocator)
     {
     }
-
-    // using iterator = decltype(elements)::iterator;
-    // using const_iterator = decltype(elements)::const_iterator;
-
-    // const_iterator cbegin() const { return elements.cbegin(); }
-    // const_iterator cend() const { return elements.cend(); }
-    // iterator begin() const { return elements.begin(); }
-    // iterator end() const { return elements.end(); }
-
-    // [[nodiscard]] constexpr T& at(size_t index) &
-    // {
-    //     return elements.at(index);
-    // }
 
     [[nodiscard]] constexpr const T& at(size_t index) const
     {
@@ -103,14 +92,6 @@ template <typename T> class OrderedCollectionImpl
             return elements.at(index);
         }
     }
-    // [[nodiscard]] constexpr T&& at(size_t index) &&
-    // {
-    //     return elements.at(index);
-    // }
-
-    [[nodiscard]] constexpr T& back() & { return elements.back(); }
-    [[nodiscard]] constexpr const T& back() const { return elements.back(); }
-    [[nodiscard]] constexpr T&& back() && { return elements.back(); }
 
     [[nodiscard]] constexpr size_t size() const { return m_size; }
 
@@ -154,14 +135,43 @@ template <typename T> class OrderedCollectionImpl
 template <typename T> class OrderedCollectionCustom
 {
   private:
-    std::pmr::polymorphic_allocator<> allocator;
-    std::span<std::span<T>> buffer;
+    static constexpr size_t block_size = 10;
+    static constexpr size_t num_initial_blocks = 8;
+
+    struct M
+    {
+        std::pmr::polymorphic_allocator<> allocator;
+        std::span<T*> block_dynamic_array;
+        size_t block_dynamic_array_num_occupied = 0;
+        size_t num_occupied = 0;
+    } m;
+
+    [[nodiscard]] constexpr size_t block_dynamic_array_size()
+    {
+        return m.block_dynamic_array_num_occupied;
+    }
+
+    [[nodiscard]] constexpr size_t block_dynamic_array_capacity()
+    {
+        return m.block_dynamic_array.size();
+    }
+
+    [[nodiscard]] constexpr std::span<T> block_dynamic_array_get(size_t index)
+    {
+        assert(index >= block_dynamic_array_size());
+        return {m.block_dynamic_array[index], block_size};
+    }
+
+    [[nodiscard]] constexpr size_t capacity()
+    {
+        return block_dynamic_array_size() * block_size;
+    }
 
   public:
     OrderedCollectionCustom() = delete;
     constexpr explicit OrderedCollectionCustom(
-        std::pmr::polymorphic_allocator<> _allocator)
-        : allocator(_allocator)
+        std::pmr::polymorphic_allocator<> allocator)
+        : m{allocator}
     {
     }
 
@@ -170,47 +180,121 @@ template <typename T> class OrderedCollectionCustom
     operator=(const OrderedCollectionCustom& other) = delete;
 
     constexpr OrderedCollectionCustom(OrderedCollectionCustom&& other) noexcept
-        : buffer(std::exchange(other.buffer, {})), allocator(other.allocator)
+        : m{std::move(other.m.allocator)}
     {
+        m.num_occupied = std::exchange(other.m.num_occupied, 0);
+        m.block_dynamic_array = std::exchange(other.m.block_dynamic_array, {});
+        m.block_dynamic_array_num_occupied =
+            std::exchange(other.m.block_dynamic_array_num_occupied, 0);
     }
 
     constexpr OrderedCollectionCustom&
-    operator=(OrderedCollectionCustom&& other) noexcept
-    {
-        assert(allocator == other.allocator);
-        std::swap(other.buffer, buffer);
-    }
+    operator=(OrderedCollectionCustom&& other) noexcept = delete;
 
     constexpr ~OrderedCollectionCustom()
     {
-        if (!buffer.empty()) {
-            for (auto sub_buffer : buffer) {
+        if (m.block_dynamic_array_num_occupied != 0) {
+            for (size_t block_index = 0;
+                 block_index < block_dynamic_array_size(); ++block_index) {
                 if constexpr (!std::is_trivially_destructible_v<T>) {
-                    for (auto item : sub_buffer) {
-                        item.~T();
+                    for (size_t sub_index = 0; sub_index < block_size;
+                         ++sub_index) {
+                        m.block_dynamic_array[block_index][sub_index].~T();
                     }
                 }
-                allocator.deallocate_bytes(sub_buffer.data(),
-                                           sub_buffer.size());
+                m.allocator.deallocate_bytes(m.block_dynamic_array[block_index],
+                                             block_size);
             }
-            // not destroying the actual spans
-            static_assert(std::is_trivially_destructible_v<
-                          std::remove_cvref_t<decltype(buffer.at(0))>>);
-            allocator.deallocate_bytes(buffer.data(), buffer.size());
+            m.allocator.deallocate_bytes(m.block_dynamic_array.data(),
+                                         m.block_dynamic_array.size_bytes());
         }
     }
 
     // TODO: implement these
     template <typename... Args>
-        requires std::is_constructible_v<T, Args...>
-    constexpr void emplace_back(Args&&... args);
-    constexpr void reserve(size_t num_elements);
-    [[nodiscard]] constexpr const T& at(size_t index) const;
-    [[nodiscard]] constexpr size_t size() const;
-    [[nodiscard]] constexpr const T& back() const&;
+        requires std::is_nothrow_constructible_v<T, Args...>
+    constexpr void emplace_back(Args&&... args)
+    {
+        T* target_slot = nullptr;
+        assert(capacity() >= size());
+        if (capacity() == size()) {
+            if (block_dynamic_array_capacity() == block_dynamic_array_size()) {
+                reallocate_blocks_leave_uninit();
+            }
+            assert(block_dynamic_array_capacity() > block_dynamic_array_size());
+
+            T*& next = m.block_dynamic_array[block_dynamic_array_size()];
+
+            next = static_cast<T*>(
+                m.allocator.allocate_bytes(sizeof(T) * block_size, alignof(T)));
+            ++m.block_dynamic_array_num_occupied;
+
+            if (next == nullptr) {
+                std::abort();
+            }
+
+            target_slot = next;
+        } else {
+            // in this case, we have space already
+            std::span last =
+                block_dynamic_array_get(block_dynamic_array_size() - 1);
+
+            target_slot = last.data() + (size() % block_size);
+        }
+
+        assert(capacity() > size());
+        std::construct_at(target_slot, std::forward<Args>(args)...);
+        ++m.num_occupied;
+    }
+
+    constexpr void reserve(size_t /**/) {}
+
+    [[nodiscard]] constexpr const T& at(size_t index) const
+    {
+        if (index >= size()) {
+            std::abort();
+        }
+        assert(index / block_size < block_dynamic_array_size());
+        return m.block_dynamic_array[index / block_size][index % block_size];
+    }
+
+    [[nodiscard]] constexpr size_t size() const { return m.num_occupied; }
+
+  private:
+    // reallocates a buffer and leaves new items uninitialized
+    void reallocate_blocks_leave_uninit()
+    {
+        const size_t new_buffer_size_items_multiplier =
+            std::ceilf(float(m.block_dynamic_array.size()) * 1.5F);
+        const size_t new_buffer_size_items =
+            new_buffer_size_items_multiplier == 0
+                ? num_initial_blocks
+                : new_buffer_size_items_multiplier;
+        const size_t new_buffer_size_bytes = new_buffer_size_items * sizeof(T*);
+
+        void* new_buffer_mem =
+            m.allocator.allocate_bytes(new_buffer_size_bytes, alignof(T*));
+
+        if (new_buffer_mem == nullptr) {
+            std::abort();
+        }
+
+        std::memcpy(new_buffer_mem, m.block_dynamic_array.data(),
+                    m.block_dynamic_array.size_bytes());
+
+        m.allocator.deallocate_bytes(m.block_dynamic_array.data(),
+                                     m.block_dynamic_array.size_bytes());
+
+        const size_t old_size_items = m.block_dynamic_array.size();
+        m.block_dynamic_array = std::span<T*>{
+            static_cast<T**>(new_buffer_mem),
+            new_buffer_size_items,
+        };
+    }
 };
 
-template <typename T> using OrderedCollection = OrderedCollectionImpl<T>;
+// template <typename T> using OrderedCollection = OrderedCollectionImpl<T>;
+template <typename T> using OrderedCollection = OrderedCollectionCustom<T>;
 
 using String = std::pmr::string;
 

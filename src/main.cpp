@@ -159,10 +159,11 @@ int main(int argc, const char* argv[])
         double(memory_resource.amount_reported_freed()) /
         double(memory_resource.amount_reported_allocated());
 
-    std::printf("Stats: %zu bytes supposedly freed, %zu supposedly allocated, "
-                "%ld bytes supposedly in use at program end.\n",
-                memory_resource.amount_reported_freed(),
-                memory_resource.amount_reported_allocated(), in_use);
+    std::printf(
+        "Stats:\n\t- %zu bytes supposedly freed\n\t- %zu supposedly allocated"
+        "\n\t- %ld bytes supposedly in use at program end\n",
+        memory_resource.amount_reported_freed(),
+        memory_resource.amount_reported_allocated(), in_use);
     std::printf("Percentage leaked: %f %%\n", (percentage_leaked * 100));
 
     return return_code;

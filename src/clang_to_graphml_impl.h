@@ -317,24 +317,19 @@ _clang_type_to_pointer_type_identifier_recursive_allocating(
     if (CXType pointee = get_cannonical_type(clang_getPointeeType(type));
         pointee.kind != CXType_Invalid) {
 
-        // allocate the new pointer object in chain
-        auto* out =
-            job.shared_data->allocator.new_object<PointerTypeIdentifier>(
-                nullptr);
-
         if (auto* ptr =
                 _clang_type_to_pointer_type_identifier_recursive_allocating(
                     job, pointee);
             ptr) {
-            out->pointee_type = ptr;
-            return out;
+            return job.shared_data->allocator.new_object<PointerTypeIdentifier>(
+                ptr);
         }
 
         if (auto concrete =
                 clang_type_to_concrete_type_identifier(job, pointee);
             concrete) {
-            out->pointee_type = std::move(concrete.value());
-            return out;
+            return job.shared_data->allocator.new_object<PointerTypeIdentifier>(
+                std::move(concrete.value()));
         }
 
         std::ignore = std::fprintf(

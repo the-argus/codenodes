@@ -253,7 +253,7 @@ struct FunctionSymbol : public Symbol
                                            const CXCursor& cursor) final;
 
   public:
-    TypeIdentifier return_type;
+    std::optional<TypeIdentifier> return_type;
     // if true, then parameter_types will not include the type of `this`, you
     // get that from .semantic_parent
     bool is_method = false;

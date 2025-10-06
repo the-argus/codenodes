@@ -8,7 +8,7 @@ size_t FunctionSymbol::get_num_symbols_this_references() const
     for (size_t i = 0; i < this->parameter_types.size(); ++i) {
         num += this->parameter_types.at(i).get_num_symbols();
     }
-    num += this->return_type.get_num_symbols();
+    num += this->return_type.value().get_num_symbols();
     return num;
 }
 
@@ -41,10 +41,10 @@ const Symbol* FunctionSymbol::get_symbol_this_references(size_t index) const
         assert(out);
         return out;
     }
-    const size_t num_symbols = this->return_type.get_num_symbols();
+    const size_t num_symbols = this->return_type.value().get_num_symbols();
     const size_t sub_index = index - iter;
     assert(sub_index < num_symbols);
-    auto* out = this->return_type.try_get_symbol(sub_index);
+    auto* out = this->return_type.value().try_get_symbol(sub_index);
     assert(out);
     return out;
 }
@@ -66,7 +66,7 @@ bool FunctionSymbol::visit_children_impl(ClangToGraphMLBuilder::Job& job,
 
     CXType return_type = get_cannonical_type(clang_getResultType(type));
 
-    this->return_type = clang_type_to_type_identifier(job, return_type);
+    this->return_type.emplace(clang_type_to_type_identifier(job, return_type));
 
     if (clang_isFunctionTypeVariadic(type) == 1) {
         std::ignore =

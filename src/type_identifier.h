@@ -4,6 +4,7 @@
 #include "aliases.h"
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <variant>
 
 namespace cn {
