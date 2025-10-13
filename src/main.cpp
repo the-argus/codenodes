@@ -20,42 +20,6 @@ constexpr bool string_view_compare(LHS a, RHS b)
 }
 } // namespace
 
-class DebugMonotonicBuffer : public std::pmr::monotonic_buffer_resource
-{
-  public:
-    [[nodiscard]] size_t amount_reported_freed() const
-    {
-        return bytes_theoretically_freed;
-    };
-
-    [[nodiscard]] size_t amount_reported_allocated() const
-    {
-        return bytes_theoretically_allocated;
-    };
-
-  protected:
-    void do_deallocate(void* mem, size_t bytes, size_t alignment) final
-    {
-        bytes_theoretically_freed += bytes;
-
-        // std::ignore = std::fprintf(stderr, "Leaked %zu bytes\n", bytes);
-
-        std::pmr::monotonic_buffer_resource::do_deallocate(mem, bytes,
-                                                           alignment);
-    }
-
-    void* do_allocate(size_t bytes, size_t alignment) final
-    {
-        bytes_theoretically_allocated += bytes;
-        return std::pmr::monotonic_buffer_resource::do_allocate(bytes,
-                                                                alignment);
-    }
-
-  private:
-    size_t bytes_theoretically_allocated = 0;
-    size_t bytes_theoretically_freed = 0;
-};
-
 int main(int argc, const char* argv[])
 {
     constexpr std::string_view version = "0.0.1";
@@ -122,7 +86,7 @@ int main(int argc, const char* argv[])
 
     // all memory is leaked, we do not free anything throughout the whole
     // program, though we can free it all at the end of this function
-    DebugMonotonicBuffer memory_resource{};
+    std::pmr::monotonic_buffer_resource memory_resource{};
 
     cn::ClangToGraphMLBuilder graph_builder(memory_resource);
 
@@ -150,21 +114,5 @@ int main(int argc, const char* argv[])
         graph_builder.parse(entry.file.c_str(), args);
     }
 
-    auto return_code =
-        graph_builder.finish(output_file) ? EXIT_SUCCESS : EXIT_FAILURE;
-
-    int64_t in_use = int64_t(memory_resource.amount_reported_allocated()) -
-                     int64_t(memory_resource.amount_reported_freed());
-    double percentage_leaked =
-        double(memory_resource.amount_reported_freed()) /
-        double(memory_resource.amount_reported_allocated());
-
-    std::printf(
-        "Stats:\n\t- %zu bytes supposedly freed\n\t- %zu supposedly allocated"
-        "\n\t- %ld bytes supposedly in use at program end\n",
-        memory_resource.amount_reported_freed(),
-        memory_resource.amount_reported_allocated(), in_use);
-    std::printf("Percentage leaked: %f %%\n", (percentage_leaked * 100));
-
-    return return_code;
+    return graph_builder.finish(output_file) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
