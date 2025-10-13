@@ -135,8 +135,8 @@ template <typename T> class OrderedCollectionImpl
 template <typename T> class OrderedCollectionCustom
 {
   private:
-    static constexpr size_t block_size = 10;
-    static constexpr size_t num_initial_blocks = 8;
+    static constexpr size_t block_size = 1;
+    static constexpr size_t num_initial_blocks = 1;
 
     struct M
     {
