@@ -16,16 +16,99 @@ struct Args
     OrderedCollection<EnumTypeSymbol*>& inner_enums;
 };
 
-size_t ClassSymbol::get_num_symbols_this_references() const { return 0; }
-
-const Symbol* ClassSymbol::get_symbol_this_references(size_t /*index*/) const
+size_t ClassSymbol::get_num_symbols_this_references() const
 {
+    size_t total_symbols = 0;
+
+    const auto collect_symbol_count =
+        [&](const OrderedCollection<TypeIdentifier>& collection) {
+            for (size_t i = 0; i < collection.size(); ++i) {
+                total_symbols += collection.at(i).get_num_symbols();
+            }
+        };
+    const auto collect_symbol_count_of_symbols = [&](const auto& collection) {
+        for (size_t i = 0; i < collection.size(); ++i) {
+            total_symbols +=
+                collection.at(i)->get_num_symbols_this_references();
+        }
+    };
+
+    collect_symbol_count(type_refs);
+    collect_symbol_count(field_types);
+    collect_symbol_count(parent_classes);
+    collect_symbol_count_of_symbols(inner_classes);
+    collect_symbol_count_of_symbols(member_functions);
+    collect_symbol_count_of_symbols(inner_enums);
+
+    return total_symbols;
+}
+
+const Symbol* ClassSymbol::get_symbol_this_references(size_t index) const
+{
+    size_t current_search_index = 0;
+    const auto find_in_type_collection =
+        [&](const OrderedCollection<TypeIdentifier>& collection)
+        -> const Symbol* {
+        for (size_t i = 0; i < collection.size(); ++i) {
+            const TypeIdentifier& iden = collection.at(i);
+            const size_t num_subsymbols = iden.get_num_symbols();
+
+            if (current_search_index <= index &&
+                current_search_index + num_subsymbols > index) {
+                return iden.try_get_symbol(index - current_search_index);
+            }
+
+            current_search_index += num_subsymbols;
+        };
+        return nullptr;
+    };
+    const auto find_in_type_symbol_collection =
+        [&](const auto& collection) -> const Symbol* {
+        for (size_t i = 0; i < collection.size(); ++i) {
+            const Symbol* sym = collection.at(i);
+            const size_t num_subsymbols =
+                sym->get_num_symbols_this_references();
+
+            if (current_search_index <= index &&
+                current_search_index + num_subsymbols > index) {
+                return sym->get_symbol_this_references(index -
+                                                       current_search_index);
+            }
+
+            current_search_index += num_subsymbols;
+        };
+        return nullptr;
+    };
+
+    if (const auto* sym = find_in_type_collection(type_refs)) {
+        return sym;
+    }
+    if (const auto* sym = find_in_type_collection(field_types)) {
+        return sym;
+    }
+    if (const auto* sym = find_in_type_collection(parent_classes)) {
+        return sym;
+    }
+    if (const auto* sym = find_in_type_symbol_collection(inner_classes)) {
+        return sym;
+    }
+    if (const auto* sym = find_in_type_symbol_collection(member_functions)) {
+        return sym;
+    }
+    if (const auto* sym = find_in_type_symbol_collection(inner_enums)) {
+        return sym;
+    }
+
     return nullptr;
 }
 
-Symbol* ClassSymbol::get_symbol_this_references(size_t /*index*/)
+Symbol* ClassSymbol::get_symbol_this_references(size_t index)
 {
-    return nullptr;
+    // using const cast to avoid repeating relatively complicated getter
+    // function
+    return const_cast<Symbol*>(
+        const_cast<const ClassSymbol*>(this)->get_symbol_this_references(
+            index));
 }
 
 namespace {
