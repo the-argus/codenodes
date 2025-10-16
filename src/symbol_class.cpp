@@ -26,19 +26,13 @@ size_t ClassSymbol::get_num_symbols_this_references() const
                 total_symbols += collection.at(i).get_num_symbols();
             }
         };
-    const auto collect_symbol_count_of_symbols = [&](const auto& collection) {
-        for (size_t i = 0; i < collection.size(); ++i) {
-            total_symbols +=
-                collection.at(i)->get_num_symbols_this_references();
-        }
-    };
 
     collect_symbol_count(type_refs);
     collect_symbol_count(field_types);
     collect_symbol_count(parent_classes);
-    collect_symbol_count_of_symbols(inner_classes);
-    collect_symbol_count_of_symbols(member_functions);
-    collect_symbol_count_of_symbols(inner_enums);
+    total_symbols += inner_classes.size();
+    total_symbols += member_functions.size();
+    total_symbols += inner_enums.size();
 
     return total_symbols;
 }
@@ -62,23 +56,6 @@ const Symbol* ClassSymbol::get_symbol_this_references(size_t index) const
         };
         return nullptr;
     };
-    const auto find_in_type_symbol_collection =
-        [&](const auto& collection) -> const Symbol* {
-        for (size_t i = 0; i < collection.size(); ++i) {
-            const Symbol* sym = collection.at(i);
-            const size_t num_subsymbols =
-                sym->get_num_symbols_this_references();
-
-            if (current_search_index <= index &&
-                current_search_index + num_subsymbols > index) {
-                return sym->get_symbol_this_references(index -
-                                                       current_search_index);
-            }
-
-            current_search_index += num_subsymbols;
-        };
-        return nullptr;
-    };
 
     if (const auto* sym = find_in_type_collection(type_refs)) {
         return sym;
@@ -89,15 +66,21 @@ const Symbol* ClassSymbol::get_symbol_this_references(size_t index) const
     if (const auto* sym = find_in_type_collection(parent_classes)) {
         return sym;
     }
-    if (const auto* sym = find_in_type_symbol_collection(inner_classes)) {
-        return sym;
+    if (current_search_index + inner_classes.size() > index) {
+        assert(current_search_index <= index);
+        return inner_classes.at(index - current_search_index);
     }
-    if (const auto* sym = find_in_type_symbol_collection(member_functions)) {
-        return sym;
+    current_search_index += inner_classes.size();
+    if (current_search_index + member_functions.size() > index) {
+        assert(current_search_index <= index);
+        return member_functions.at(index - current_search_index);
     }
-    if (const auto* sym = find_in_type_symbol_collection(inner_enums)) {
-        return sym;
+    current_search_index += member_functions.size();
+    if (current_search_index + inner_enums.size() > index) {
+        assert(current_search_index <= index);
+        return inner_enums.at(index - current_search_index);
     }
+    current_search_index += inner_enums.size();
 
     return nullptr;
 }
